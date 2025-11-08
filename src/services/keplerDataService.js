@@ -415,10 +415,29 @@ export function generateKeplerHTML(geoJsonData, location) {
 /**
  * Generate simplified 3D visualization using deck.gl with proper base map
  */
-export function generateDeckGLHTML(geoJsonData, location) {
+export function generateDeckGLHTML(geoJsonData, location, weatherData = null, mapRegion = null, showHeat = true, showWind = true) {
   const dataString = JSON.stringify(geoJsonData);
-  const centerLat = location?.latitude || 52.52;
-  const centerLon = location?.longitude || 13.405;
+  // Use map region if available, otherwise use location
+  const centerLat = mapRegion?.latitude || location?.latitude || 52.52;
+  const centerLon = mapRegion?.longitude || location?.longitude || 13.405;
+  const weatherString = weatherData ? JSON.stringify(weatherData) : 'null';
+  
+  // Calculate zoom from region delta if available
+  let initialZoom = 15;
+  if (mapRegion?.latitudeDelta) {
+    // Convert delta to approximate zoom level
+    const delta = Math.max(mapRegion.latitudeDelta, mapRegion.longitudeDelta);
+    if (delta > 0.1) initialZoom = 10;
+    else if (delta > 0.05) initialZoom = 11;
+    else if (delta > 0.02) initialZoom = 12;
+    else if (delta > 0.01) initialZoom = 13;
+    else if (delta > 0.005) initialZoom = 14;
+    else initialZoom = 15;
+  }
+  
+  console.log('Weather data being passed:', weatherData);
+  console.log('Map region:', mapRegion);
+  console.log('Initial zoom:', initialZoom);
 
   return `
 <!DOCTYPE html>
@@ -438,12 +457,13 @@ export function generateDeckGLHTML(geoJsonData, location) {
       padding: 0;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #000;
+      background: #1a1a1a;
     }
     #deck-container {
       width: 100vw;
       height: 100vh;
       position: relative;
+      background: transparent;
     }
     .info {
       position: absolute;
@@ -481,6 +501,10 @@ export function generateDeckGLHTML(geoJsonData, location) {
       <div>🌳 Dark Green: OSM Trees</div>
       <div>🛣️ Gray: Existing Streets</div>
       <div>🔴 Red: Removed Items</div>
+      <div style="margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px;">
+        <div>🌡️ Heat Map: Temperature overlay</div>
+        <div>💨 Blue Lines: Wind direction & speed</div>
+      </div>
     </div>
   </div>
   <div id="error" class="error" style="display: none;"></div>
@@ -503,6 +527,12 @@ export function generateDeckGLHTML(geoJsonData, location) {
           const data = ${dataString};
           const centerLat = ${centerLat};
           const centerLon = ${centerLon};
+          const weather = ${weatherString};
+          
+          console.log('Weather data in visualization:', weather);
+          console.log('Weather temperature:', weather?.temperature);
+          console.log('Weather windSpeed:', weather?.windSpeed);
+          console.log('Weather windDirection:', weather?.windDirection);
 
           // Check if deck.gl is loaded
           if (typeof deck === 'undefined' || !deck.DeckGL) {
@@ -539,35 +569,37 @@ export function generateDeckGLHTML(geoJsonData, location) {
                   color: isAdded ? [34, 197, 94, 255] : // Bright green for user-added trees
                          isExisting ? [22, 163, 74, 255] : // Medium green for OSM trees
                          [34, 139, 34, 255], // Dark green fallback
-                  radius: 2.5, // meters - tree trunk/canopy radius (realistic size)
+                  radius: 3.0, // meters - tree canopy radius (slightly larger for better visibility)
                   height: isAdded ? 15 : 12, // meters - tree height (added trees slightly taller)
                   type: 'tree',
                   status: f.properties.status,
                 });
               }
             } else if (isCanal && f.geometry.type === 'LineString') {
-              // Canals as 3D lines (water surface)
+              // Canals as 3D water channels
               // Skip removed canals to avoid clutter
               if (!isRemoved) {
                 canals.push({
                   path: f.geometry.coordinates,
-                  color: isAdded ? [34, 197, 94, 200] : // Bright green for user-added canals
-                         [59, 130, 246, 200], // Blue for existing canals
-                  width: isAdded ? 8 : 6, // meters - canal width
+                  color: isAdded ? [34, 197, 94, 220] : // Bright green/cyan for user-added canals
+                         [59, 130, 246, 240], // Blue for existing canals (water color)
+                  width: isAdded ? 10 : 8, // meters - canal width (wider for visibility)
                   type: 'canal',
                   status: f.properties.status,
+                  elevation: -0.5, // Slightly below ground to show as channel
                 });
               }
             } else if (isStreet && f.geometry.type === 'LineString') {
-              // Streets as 3D lines (road surface)
+              // Streets as 3D road surfaces
               streets.push({
                 path: f.geometry.coordinates,
-                color: isAdded ? [16, 185, 129, 220] : // Green for user-added streets
-                       isRemoved ? [239, 68, 68, 150] : // Red for removed streets
-                       [100, 100, 100, 200], // Gray for existing streets
-                width: isAdded ? 6 : 5, // meters - street width
+                color: isAdded ? [16, 185, 129, 240] : // Green for user-added streets
+                       isRemoved ? [239, 68, 68, 180] : // Red for removed streets
+                       [120, 120, 120, 240], // Dark gray for existing streets (road color)
+                width: isAdded ? 8 : 6, // meters - street width (wider for visibility)
                 type: 'street',
                 status: f.properties.status,
+                elevation: 0.3, // Slightly above ground to show as road surface
               });
             } else if (f.properties.type === 'building') {
               // Buildings - check geometry type to determine rendering method
@@ -646,23 +678,169 @@ export function generateDeckGLHTML(geoJsonData, location) {
           const viewLat = (minLat !== Infinity && maxLat !== -Infinity) ? (minLat + maxLat) / 2 : centerLat;
           const viewLon = (minLon !== Infinity && maxLon !== -Infinity) ? (minLon + maxLon) / 2 : centerLon;
           
-          // Calculate zoom level based on bounds
-          let viewZoom = 15;
+          // Calculate zoom level - prefer map region zoom, then bounds, then default
+          let viewZoom = ${initialZoom};
           if (minLat !== Infinity && maxLat !== -Infinity && minLon !== Infinity && maxLon !== -Infinity) {
             const latRange = maxLat - minLat;
             const lonRange = maxLon - minLon;
             const maxRange = Math.max(latRange, lonRange);
-            // Approximate zoom calculation
-            if (maxRange > 0.1) viewZoom = 10;
-            else if (maxRange > 0.05) viewZoom = 11;
-            else if (maxRange > 0.02) viewZoom = 12;
-            else if (maxRange > 0.01) viewZoom = 13;
-            else if (maxRange > 0.005) viewZoom = 14;
-            else viewZoom = 15;
+            // Only use bounds-based zoom if we don't have a map region
+            if (!${mapRegion ? 'true' : 'false'}) {
+              // Approximate zoom calculation from bounds
+              if (maxRange > 0.1) viewZoom = 10;
+              else if (maxRange > 0.05) viewZoom = 11;
+              else if (maxRange > 0.02) viewZoom = 12;
+              else if (maxRange > 0.01) viewZoom = 13;
+              else if (maxRange > 0.005) viewZoom = 14;
+              else viewZoom = 15;
+            }
           }
+          
+          // Weather layer visibility state
+          let showHeatLayer = ${showHeat};
+          let showWindLayer = ${showWind};
+          
+          // Prepare weather visualizations
+          const weatherLayers = [];
+          
+          // Heat map layer (temperature visualization) - always create, visibility controlled by toggle
+          if (weather && weather.temperature !== undefined && weather.temperature !== null) {
+            console.log('Creating heat map with temperature:', weather.temperature);
+            const heatPoints = [];
+            const gridSize = 30; // Increased grid size for better coverage
+            const latRange = (maxLat !== -Infinity && minLat !== Infinity) ? Math.max(0.01, maxLat - minLat) : 0.01;
+            const lonRange = (maxLon !== -Infinity && minLon !== Infinity) ? Math.max(0.01, maxLon - minLon) : 0.01;
+            
+            // Temperature color mapping (blue = cold, red = hot)
+            const temp = weather.temperature || 10;
+            const minTemp = 0;
+            const maxTemp = 40;
+            const normalizedTemp = Math.max(0, Math.min(1, (temp - minTemp) / (maxTemp - minTemp)));
+            
+            for (let i = 0; i < gridSize; i++) {
+              for (let j = 0; j < gridSize; j++) {
+                const lat = viewLat + (i / gridSize - 0.5) * latRange;
+                const lon = viewLon + (j / gridSize - 0.5) * lonRange;
+                heatPoints.push({
+                  position: [lon, lat],
+                  temperature: temp,
+                });
+              }
+            }
+            
+            console.log('Heat points created:', heatPoints.length);
+            
+            weatherLayers.push(
+              new deck.HeatmapLayer({
+                id: 'heat-map',
+                data: heatPoints,
+                getPosition: d => d.position,
+                getWeight: d => d.temperature,
+                radiusPixels: 80,
+                intensity: 1.5,
+                threshold: 0.03,
+                colorRange: [
+                  [0, 0, 255, 0],      // Blue (cold)
+                  [0, 255, 255, 100],  // Cyan
+                  [0, 255, 0, 150],    // Green
+                  [255, 255, 0, 200],  // Yellow
+                  [255, 0, 0, 255],     // Red (hot)
+                ],
+                opacity: 0.6,
+                visible: showHeatLayer,
+              })
+            );
+          } else {
+            console.log('No temperature data available:', weather);
+          }
+          
+          // Wind visualization (arrows showing direction and speed) - always create, visibility controlled by toggle
+          if (weather && weather.windSpeed !== undefined && weather.windSpeed !== null && weather.windDirection !== undefined && weather.windDirection !== null) {
+            console.log('Creating wind visualization with speed:', weather.windSpeed, 'direction:', weather.windDirection);
+            const windArrows = [];
+            const gridSize = 20; // Increased grid size
+            const latRange = (maxLat !== -Infinity && minLat !== Infinity) ? Math.max(0.01, maxLat - minLat) : 0.01;
+            const lonRange = (maxLon !== -Infinity && minLon !== Infinity) ? Math.max(0.01, maxLon - minLon) : 0.01;
+            
+            const windSpeed = weather.windSpeed || 10;
+            const windDir = (weather.windDirection || 0) * Math.PI / 180; // Convert to radians
+            // Make arrows more visible - scale by wind speed in meters
+            const arrowLengthMeters = Math.min(100, Math.max(20, windSpeed * 3));
+            const arrowLength = arrowLengthMeters / 111000; // Convert meters to degrees
+            
+            // Wind speed color: light blue (calm) -> dark blue (strong)
+            const windIntensity = Math.min(1, windSpeed / 30);
+            const windColor = [
+              Math.floor(100 + windIntensity * 100),
+              Math.floor(150 + windIntensity * 50),
+              Math.floor(255 - windIntensity * 50),
+              255 // Fully opaque for visibility
+            ];
+            
+            for (let i = 0; i < gridSize; i++) {
+              for (let j = 0; j < gridSize; j++) {
+                const lat = viewLat + (i / gridSize - 0.5) * latRange;
+                const lon = viewLon + (j / gridSize - 0.5) * lonRange;
+                
+                // Create arrow path (line from center pointing in wind direction)
+                const endLat = lat + arrowLength * Math.cos(windDir);
+                const endLon = lon + arrowLength * Math.sin(windDir) / Math.cos(lat * Math.PI / 180);
+                
+                windArrows.push({
+                  path: [[lon, lat], [endLon, endLat]],
+                  speed: windSpeed,
+                  direction: windDir,
+                  color: windColor,
+                });
+              }
+            }
+            
+            console.log('Wind arrows created:', windArrows.length);
+            
+            weatherLayers.push(
+              new deck.PathLayer({
+                id: 'wind-arrows',
+                data: windArrows,
+                pickable: true,
+                widthMinPixels: 3,
+                widthMaxPixels: 6,
+                getPath: d => d.path,
+                getColor: d => d.color,
+                getWidth: 4,
+                widthUnits: 'pixels',
+                rounded: false,
+                billboard: false,
+                capRounded: true,
+                jointRounded: true,
+                visible: showWindLayer,
+              })
+            );
+          } else {
+            console.log('No wind data available:', weather);
+          }
+          
+          console.log('Weather layers created:', weatherLayers.length);
 
+          // Store deck instance globally for toggle updates
+          let deckInstance = null;
+          
+          // Function to update layer visibility - expose globally for React Native
+          window.updateLayerVisibility = function(layerId, visible) {
+            if (deckInstance) {
+              const currentLayers = deckInstance.props.layers;
+              const updatedLayers = currentLayers.map(layer => {
+                if (layer.id === layerId) {
+                  // Create a new layer with updated visibility
+                  return layer.clone({ visible: visible });
+                }
+                return layer;
+              });
+              deckInstance.setProps({ layers: updatedLayers });
+            }
+          };
+          
           // Create deck.gl visualization with 3D shapes and base map
-          const deckInstance = new deck.DeckGL({
+          deckInstance = new deck.DeckGL({
             container: 'deck-container',
             initialViewState: {
               longitude: viewLon,
@@ -675,6 +853,8 @@ export function generateDeckGLHTML(geoJsonData, location) {
             },
             controller: true,
             layers: [
+              // Add weather visualizations FIRST (heat map and wind) so they render on the ground
+              ...weatherLayers,
               // Buildings with polygon geometry - render as 3D extruded polygons
               new deck.PolygonLayer({
                 id: 'buildings-polygons-3d',
@@ -710,49 +890,68 @@ export function generateDeckGLHTML(geoJsonData, location) {
                 lineWidthMinPixels: 2,
                 wireframe: false,
               }),
-              // Trees as 3D cylinders (circular columns) - rendered on top of buildings
+              // Trees as 3D cylinders (canopy representation) - rendered on top of buildings
               new deck.ColumnLayer({
                 id: 'trees-3d',
                 data: trees,
                 pickable: true,
-                opacity: 0.9,
-                diskResolution: 12, // Smooth circular cylinders for trees
+                opacity: 0.85,
+                diskResolution: 16, // More sides for smoother tree appearance
                 extruded: true,
                 elevationScale: 1,
                 getPosition: d => d.position,
-                getRadius: d => d.radius, // Use tree radius (2.5 meters)
-                getFillColor: d => d.color,
-                getLineColor: d => [d.color[0] * 0.7, d.color[1] * 0.7, d.color[2] * 0.7, 255], // Darker outline
-                getElevation: d => d.height,
+                getRadius: d => d.radius || 3.0, // Tree canopy radius (slightly larger for visibility)
+                getFillColor: d => d.color, // Green canopy color
+                getLineColor: d => {
+                  // Darker green outline for tree definition
+                  return [Math.max(0, d.color[0] - 30), Math.max(0, d.color[1] - 20), Math.max(0, d.color[2] - 10), 255];
+                },
+                getElevation: d => d.height || 12,
                 radiusUnits: 'meters',
-                lineWidthMinPixels: 1.5,
+                lineWidthMinPixels: 2,
                 wireframe: false,
               }),
-              // Canals as 3D paths (water surface)
+              // Canals as 3D extruded paths (water channels with depth)
               new deck.PathLayer({
                 id: 'canals-3d',
                 data: canals,
                 pickable: true,
-                widthMinPixels: 2,
+                widthMinPixels: 3,
                 getPath: d => d.path,
                 getColor: d => d.color,
                 getWidth: d => d.width,
                 widthUnits: 'meters',
                 rounded: true,
                 billboard: false,
+                // Add slight depth to show as water channels
+                getElevation: d => d.elevation || -0.5, // Below ground to show as channel
+                elevationScale: 1,
+                extruded: true,
+                capRounded: true,
+                jointRounded: true,
+                // Add a subtle outline to make canals more visible
+                getTilt: 0,
               }),
-              // Streets as 3D paths (road surface)
+              // Streets as 3D extruded paths (road surface with slight elevation)
               new deck.PathLayer({
                 id: 'streets-3d',
                 data: streets,
                 pickable: true,
-                widthMinPixels: 2,
+                widthMinPixels: 3,
                 getPath: d => d.path,
                 getColor: d => d.color,
                 getWidth: d => d.width,
                 widthUnits: 'meters',
                 rounded: true,
                 billboard: false,
+                // Add slight elevation to show as road surface
+                getElevation: d => d.elevation || 0.3, // Above ground to show as road
+                elevationScale: 1,
+                extruded: true,
+                capRounded: true,
+                jointRounded: true,
+                // Add a subtle outline to make streets more visible
+                getTilt: 0,
               }),
             ],
             onError: (error) => {
@@ -769,6 +968,11 @@ export function generateDeckGLHTML(geoJsonData, location) {
           // Hide loading indicator
           const loadingDiv = document.getElementById('loading');
           if (loadingDiv) loadingDiv.style.display = 'none';
+          
+          // Send ready message to React Native
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+          }
 
           // Handle window resize
           const handleResize = () => {
