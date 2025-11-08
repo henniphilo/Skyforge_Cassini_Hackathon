@@ -42,7 +42,6 @@ export default function WeatherGameScreen() {
   const [tokenCharges, setTokenCharges] = useState({
     life: 0,      // Trees planted
     social: 50,   // Buildings added/removed (starts at 50 for balance)
-    water: 0,     // Canals built
     energy: 0,    // Streets built
   });
 
@@ -94,7 +93,6 @@ export default function WeatherGameScreen() {
   useEffect(() => {
     const treesCount = userBuildings.filter(b => b.type === 'tree').length;
     const buildingsCount = userBuildings.filter(b => b.type === 'building').length;
-    const canalsCount = userBuildings.filter(b => b.type === 'canal').length;
     const streetsCount = userBuildings.filter(b => b.type === 'street').length;
     
     // Life token: based on trees planted (max 100)
@@ -104,16 +102,12 @@ export default function WeatherGameScreen() {
     // Start at 50, +5 per building added, -5 per building removed
     const socialCharge = Math.max(0, Math.min(100, 50 + (buildingsCount * 5) - (removedBuildings.length * 5)));
     
-    // Water token: based on canals built (max 100)
-    const waterCharge = Math.min(100, canalsCount * 15);
-    
     // Energy token: based on streets built (max 100)
     const energyCharge = Math.min(100, streetsCount * 12);
     
     setTokenCharges({
       life: lifeCharge,
       social: socialCharge,
-      water: waterCharge,
       energy: energyCharge,
     });
   }, [userBuildings, removedBuildings]);
@@ -913,12 +907,11 @@ export default function WeatherGameScreen() {
                   }
                   
                   setGameIteration(0);
-                  setTokenCharges({
-                    life: 0,
-                    social: 50,
-                    water: 0,
-                    energy: 0,
-                  });
+                setTokenCharges({
+                  life: 0,
+                  social: 50,
+                  energy: 0,
+                });
                 } catch (error) {
                   console.error('Error in reset handler:', error);
                   Alert.alert('Error', 'Failed to reset map. Please try again.');
@@ -932,10 +925,6 @@ export default function WeatherGameScreen() {
 
         {/* Weather Stats Panel */}
         <View style={styles.statsPanel}>
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsTitle}>🌍 Weather Impact</Text>
-          </View>
-
           <ScrollView 
             horizontal 
             showsHorizontalScrollIndicator={true}
@@ -943,28 +932,28 @@ export default function WeatherGameScreen() {
             style={styles.weatherScrollView}
           >
             <StatCard
-              icon="🌡️"
+              iconSource={require('../assets/fire.png')}
               label="Temperature"
               value={`${currentWeather.temperature.toFixed(1)}°C`}
               change={impact?.temp}
               baseValue={baseWeather?.temperature}
             />
             <StatCard
-              icon="💨"
+              iconSource={require('../assets/wind.png')}
               label="Wind Speed"
               value={`${currentWeather.windSpeed.toFixed(1)} km/h`}
               change={impact?.wind}
               baseValue={baseWeather?.windSpeed}
             />
             <StatCard
-              icon="💧"
+              iconSource={require('../assets/water.png')}
               label="Humidity"
               value={`${currentWeather.humidity.toFixed(1)}%`}
               change={impact?.humidity}
               baseValue={baseWeather?.humidity}
             />
             <StatCard
-              icon="🌍"
+              iconSource={require('../assets/earth.png')}
               label="CO₂"
               value={`${currentWeather.co2.toFixed(1)} ppm`}
               change={impact?.co2}
@@ -1007,12 +996,6 @@ export default function WeatherGameScreen() {
               color="#3b82f6"
             />
             <TokenBar 
-              icon={require('../assets/water.png')}
-              label="Water"
-              charge={tokenCharges.water}
-              color="#06b6d4"
-            />
-            <TokenBar 
               icon={require('../assets/energy.png')}
               label="Energy"
               charge={tokenCharges.energy}
@@ -1043,7 +1026,7 @@ export default function WeatherGameScreen() {
   );
 }
 
-function StatCard({ icon, label, value, change, baseValue }) {
+function StatCard({ iconSource, label, value, change, baseValue }) {
   const changeValue = parseFloat(change || 0);
   const isPositive = changeValue > 0;
   const isNegative = changeValue < 0;
@@ -1051,7 +1034,13 @@ function StatCard({ icon, label, value, change, baseValue }) {
 
   return (
     <View style={styles.statCard}>
-      <Text style={styles.statIcon}>{icon}</Text>
+      {iconSource ? (
+        <Image 
+          source={iconSource} 
+          style={styles.statIconImage}
+          resizeMode="contain"
+        />
+      ) : null}
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
       {hasChange ? (
@@ -1376,6 +1365,11 @@ const styles = StyleSheet.create({
   statIcon: {
     fontSize: 24,
     marginBottom: 2,
+  },
+  statIconImage: {
+    width: 32,
+    height: 32,
+    marginBottom: 4,
   },
   statLabel: {
     fontSize: 10,
