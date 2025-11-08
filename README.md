@@ -1,120 +1,172 @@
-# Urban Climate Simulator 🌡️
+# Weather Game App with Copernicus Data
 
-Eine interaktive Web-Anwendung, die zeigt, wie die Entfernung von Beton/Asphalt und das Hinzufügen von Grün- oder Wasserflächen die lokale Temperatur senkt und wie Gebäude die Windgeschwindigkeit beeinflussen.
+A React Native weather app with a 3D map game mode that uses Copernicus data and OpenStreetMap.
 
-## Features
+## Prerequisites
 
-- **Temperatur-Simulation**: Visualisierung der Temperaturänderungen durch verschiedene Interventionen
-- **Wind-Simulation**: Darstellung der Windgeschwindigkeit und -richtung, beeinflusst durch Gebäude
-- **Interaktive Karte**: Klicke auf die Karte, um Interventionen hinzuzufügen
-- **Echtzeit-Feedback**: Sofortige Anzeige der Auswirkungen auf Temperatur und Wind
+Before running the app, make sure you have:
+
+1. **Node.js** (v16 or higher) - [Download here](https://nodejs.org/)
+2. **npm** or **yarn** package manager
+3. **Expo CLI** (will be installed globally or via npx)
+4. For iOS development: **Xcode** (macOS only)
+5. For Android development: **Android Studio** with Android SDK
 
 ## Installation
 
-1. Python 3.8+ installieren (auf macOS meist bereits vorhanden)
+1. **Navigate to the project directory:**
+   ```bash
+   cd /Users/henrike/Superapp-Projects/want-base
+   ```
 
-2. Virtuelle Umgebung erstellen und aktivieren:
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+   or
+   ```bash
+   yarn install
+   ```
+
+## Running the App
+
+### Option 1: Start Development Server (Recommended)
+
+Start the Expo development server:
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+npm start
 ```
 
-3. Abhängigkeiten installieren:
+or
+
 ```bash
-pip install -r requirements.txt
+yarn start
 ```
 
-## Verwendung
+This will:
+- Start the Metro bundler
+- Open Expo DevTools in your browser
+- Display a QR code in the terminal
 
-1. Virtuelle Umgebung aktivieren (falls nicht bereits aktiv):
+### Option 2: Run on Specific Platform
+
+**For iOS Simulator (macOS only):**
 ```bash
-source venv/bin/activate
+npm run ios
 ```
 
-2. Server starten:
+**For Android Emulator:**
 ```bash
-python server.py
+npm run android
 ```
 
-Oder verwende das Start-Skript:
+**For Web Browser:**
 ```bash
-./start.sh
+npm run web
 ```
 
-3. Browser öffnen und zu `http://localhost:5000` navigieren
+## Running on Physical Device
 
-4. Interventionen hinzufügen:
-   - **Park hinzufügen** 🌳: Reduziert die Temperatur um ~2°C
-   - **Wasserfläche hinzufügen** 💧: Reduziert die Temperatur um ~3°C
-   - **Asphalt entfernen** 🚫: Reduziert den Urban Heat Island Effekt
-   - **Gebäude hinzufügen** 🏢: Beeinflusst Windgeschwindigkeit (Windschatten & Kanalisierung)
-   - **Gebäude entfernen** 🗑️: Entfernt Windeffekte
+### Using Expo Go App (Easiest)
 
-## Technologie-Stack
+1. **Install Expo Go** on your phone:
+   - [iOS App Store](https://apps.apple.com/app/expo-go/id982107779)
+   - [Google Play Store](https://play.google.com/store/apps/details?id=host.exp.exponent)
 
-- **Backend**: Python (Flask)
-- **Simulation**: NumPy für numerische Berechnungen
-- **Frontend**: HTML, JavaScript
-- **Kartenvisualisierung**: Leaflet.js
-- **Heatmap**: Leaflet.heat Plugin
+2. **Start the development server:**
+   ```bash
+   npm start
+   ```
 
-## Projektstruktur
+3. **Scan the QR code:**
+   - **iOS**: Open Camera app and scan the QR code
+   - **Android**: Open Expo Go app and scan the QR code
 
-```
-Skyforge/
-├── server.py              # Flask-Server
-├── simulation.py          # Simulationslogik
-├── requirements.txt       # Python-Abhängigkeiten
-├── README.md             # Diese Datei
-└── static/
-    ├── index.html        # Haupt-HTML-Seite
-    ├── app.js           # Frontend-JavaScript
-    └── style.css        # Styling
+4. Make sure your phone and computer are on the same Wi-Fi network.
+
+### Using Development Build
+
+For a more native experience (especially for maps), you can create a development build:
+
+```bash
+npx expo run:ios
+# or
+npx expo run:android
 ```
 
-## Simulation-Details
+## Troubleshooting
 
-### Temperatur-Effekte
+### Common Issues
 
-- **Grünfläche/Park**: -2.0°C (erhöht Evapotranspiration)
-- **Wasserfläche**: -3.0°C (hohe Wärmekapazität)
-- **Asphalt entfernen**: +1.0°C (reduziert UHI-Effekt)
-- **Asphalt hinzufügen**: +2.5°C (erhöht Wärmespeicherung)
-- **Gebäude**: +1.5°C (zusätzliche Wärme)
+1. **"Module not found" errors:**
+   ```bash
+   rm -rf node_modules
+   npm install
+   ```
 
-### Wind-Effekte
+2. **Metro bundler cache issues:**
+   ```bash
+   npm start -- --clear
+   ```
 
-- **Gebäude hinzufügen**:
-  - Windschatten: 50% Reduzierung der Windgeschwindigkeit hinter dem Gebäude
-  - Kanalisierung: 30% Erhöhung der Windgeschwindigkeit an den Seiten
+3. **iOS Simulator not opening:**
+   - Make sure Xcode is installed
+   - Run: `sudo xcode-select --switch /Applications/Xcode.app`
 
-## Erweiterte Nutzung (ERA5-Daten)
+4. **Android emulator not starting:**
+   - Open Android Studio
+   - Go to AVD Manager and start an emulator
+   - Then run `npm run android`
 
-Für echte Wetterdaten können ERA5-Daten von der CDS-API abgerufen werden:
+5. **Maps not showing:**
+   - On iOS: Maps should work with OpenStreetMap
+   - On Android: Make sure you have internet connection
+   - On Web: Maps may have limited functionality
 
-```python
-# Installation: pip install cdsapi
-import cdsapi
+### Location Permissions
 
-c = cdsapi.Client()
-c.retrieve(
-    'reanalysis-era5-single-levels',
-    {
-        'product_type': 'reanalysis',
-        'variable': ['2m_temperature', '10m_u_component_of_wind', '10m_v_component_of_wind'],
-        'year': '2023',
-        'month': '07',
-        'day': '20',
-        'time': '14:00',
-        'area': [52.6, 13.3, 52.4, 13.6],  # Berlin Region
-        'format': 'netcdf',
-    },
-    'base_weather_berlin.nc')
+The app requires location permissions to:
+- Show weather data for your area
+- Display your location on the map
+
+Make sure to grant location permissions when prompted.
+
+## Project Structure
+
+```
+want-base/
+├── App.js                 # Main app component with navigation
+├── screens/
+│   ├── WeatherScreen.js   # Weather display with Copernicus data
+│   └── WeatherGameScreen.js # 3D map game mode
+├── components/
+│   └── OpenStreetMapTile.js # OpenStreetMap tile component
+├── src/
+│   └── services/
+│       └── copernicusService.js # Copernicus API service
+├── theme.js              # App theme configuration
+└── package.json          # Dependencies
 ```
 
-**Hinweis**: Die aktuelle Implementierung verwendet Mock-Daten für die Demonstration. Für Produktionsnutzung sollten echte ERA5-Daten integriert werden.
+## Features
 
-## Lizenz
+- 🌤️ **Weather Screen**: Displays real-time weather data using Copernicus API
+- 🗺️ **3D Map Game**: Interactive map with building/tree manipulation
+- 🌍 **OpenStreetMap**: Free, open-source map tiles
+- 📊 **Weather Impact**: See how environment changes affect weather stats
+- 📍 **Location Services**: Automatic location detection
 
-Dieses Projekt wurde für einen Hackathon erstellt.
+## Development Commands
+
+- `npm start` - Start Expo development server
+- `npm run ios` - Run on iOS simulator
+- `npm run android` - Run on Android emulator
+- `npm run web` - Run in web browser
+
+## Notes
+
+- The Copernicus service currently uses mock data. To use real data, register at [Copernicus Atmosphere Data Store](https://ads.atmosphere.copernicus.eu/) and update the API calls.
+- OpenStreetMap tiles are free and don't require an API key.
+- For production builds, you may want to configure additional settings in `app.json`.
 
