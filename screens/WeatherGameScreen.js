@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import MapView, { Marker, Polygon, Circle } from 'react-native-maps';
+import MapView, { Marker, Polygon, Circle, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { theme } from '../theme';
 import { getCopernicusWeatherData, calculateWeatherImpact } from '../src/services/copernicusService';
-import { fetchBuildingsSimple } from '../src/services/openStreetMapService';
+import { fetchBuildingsSimple, fetchTreesFromOSM, fetchCanalsFromOSM, fetchStreetsFromOSM } from '../src/services/openStreetMapService';
 import OpenStreetMapTile from '../components/OpenStreetMapTile';
 import KeplerGLView from '../components/KeplerGLView';
 
@@ -17,12 +17,18 @@ export default function WeatherGameScreen() {
   const [baseWeather, setBaseWeather] = useState(null);
   const [currentWeather, setCurrentWeather] = useState(null);
   const [existingBuildings, setExistingBuildings] = useState([]); // Buildings from OSM
-  const [userBuildings, setUserBuildings] = useState([]); // User-added buildings/trees
+  const [existingTrees, setExistingTrees] = useState([]); // Trees from OSM
+  const [existingCanals, setExistingCanals] = useState([]); // Canals from OSM
+  const [existingStreets, setExistingStreets] = useState([]); // Streets from OSM
+  const [userBuildings, setUserBuildings] = useState([]); // User-added buildings/trees/canals/streets
   const [removedBuildings, setRemovedBuildings] = useState([]); // Buildings that were removed
-  const [mode, setMode] = useState('view'); // 'view', 'add-building', 'add-tree', 'remove'
+  const [removedTrees, setRemovedTrees] = useState([]); // Trees that were removed
+  const [removedCanals, setRemovedCanals] = useState([]); // Canals that were removed
+  const [removedStreets, setRemovedStreets] = useState([]); // Streets that were removed
+  const [mode, setMode] = useState('view'); // 'view', 'add-building', 'add-tree', 'add-canal', 'add-street', 'remove'
   const [showMarkers, setShowMarkers] = useState(false); // Toggle markers visibility for editing
-  const [showRendered, setShowRendered] = useState(false); // Toggle rendered changes on map
   const [showKepler, setShowKepler] = useState(false); // Toggle Kepler.gl 3D visualization
+  const [showBuildMenu, setShowBuildMenu] = useState(false); // Toggle build dropdown menu
   const mapRef = useRef(null);
 
   useEffect(() => {
@@ -68,18 +74,24 @@ export default function WeatherGameScreen() {
 
   const loadWeatherData = async (coords) => {
     try {
-      // Load weather data and buildings in parallel
-      const [weatherData, buildingsData] = await Promise.all([
+      // Load weather data, buildings, trees, canals, and streets in parallel
+      const [weatherData, buildingsData, treesData, canalsData, streetsData] = await Promise.all([
         getCopernicusWeatherData(coords.latitude, coords.longitude),
-        fetchBuildingsSimple(coords.latitude, coords.longitude, 0.01)
+        fetchBuildingsSimple(coords.latitude, coords.longitude, 0.01),
+        fetchTreesFromOSM(coords.latitude, coords.longitude, 0.01),
+        fetchCanalsFromOSM(coords.latitude, coords.longitude, 0.01),
+        fetchStreetsFromOSM(coords.latitude, coords.longitude, 0.01)
       ]);
       
       setBaseWeather(weatherData);
       setCurrentWeather(weatherData);
       setExistingBuildings(buildingsData);
+      setExistingTrees(treesData);
+      setExistingCanals(canalsData);
+      setExistingStreets(streetsData);
     } catch (error) {
       console.error('Error loading weather data:', error);
-      // Still try to load weather data even if buildings fail
+      // Still try to load weather data even if other data fails
       const weatherData = await getCopernicusWeatherData(coords.latitude, coords.longitude);
       setBaseWeather(weatherData);
       setCurrentWeather(weatherData);
@@ -101,8 +113,9 @@ export default function WeatherGameScreen() {
   };
 
   const handleMapPress = (event) => {
+    const { coordinate } = event.nativeEvent;
+
     if (mode === 'add-building' || mode === 'add-tree') {
-      const { coordinate } = event.nativeEvent;
       const buildingType = mode === 'add-building' ? 'building' : 'tree';
       
       // Create polygon for buildings
@@ -126,9 +139,26 @@ export default function WeatherGameScreen() {
         isUserAdded: true,
       };
       setUserBuildings([...userBuildings, newBuilding]);
+    } else if (mode === 'add-canal' || mode === 'add-street') {
+      // For canals and streets, create a short straight line segment
+      const itemType = mode === 'add-canal' ? 'canal' : 'street';
+      const length = 0.002; // ~200 meters
+      const angle = Math.random() * 2 * Math.PI; // Random direction
+      
+      const endCoordinate = {
+        latitude: coordinate.latitude + length * Math.cos(angle),
+        longitude: coordinate.longitude + length * Math.sin(angle),
+      };
+
+      const newItem = {
+        id: `user_${Date.now()}`,
+        coordinates: [coordinate, endCoordinate],
+        type: itemType,
+        isUserAdded: true,
+      };
+      setUserBuildings([...userBuildings, newItem]);
     } else if (mode === 'remove') {
       // Find nearest existing building (not already removed, not user-added)
-      const { coordinate } = event.nativeEvent;
       const availableBuildings = existingBuildings.filter(
         b => !removedBuildings.some(rb => rb.id === b.id)
       );
@@ -151,8 +181,106 @@ export default function WeatherGameScreen() {
       }, null);
 
       if (nearestBuilding) {
-        // Mark building as removed
         setRemovedBuildings([...removedBuildings, nearestBuilding]);
+      }
+    } else if (mode === 'remove') {
+      // Unified remove mode - finds and removes the nearest item of any type
+      const allItems = [];
+      
+      // Add buildings
+      existingBuildings
+        .filter(b => !removedBuildings.some(rb => rb.id === b.id))
+        .forEach(b => allItems.push({ ...b, itemType: 'building', isUserAdded: false }));
+      
+      // Add trees
+      existingTrees
+        .filter(t => !removedTrees.some(rt => rt.id === t.id))
+        .forEach(t => allItems.push({ ...t, itemType: 'tree', isUserAdded: false }));
+      
+      userBuildings
+        .filter(b => b.type === 'tree')
+        .forEach(t => allItems.push({ ...t, itemType: 'tree', isUserAdded: true }));
+      
+      // Add canals
+      existingCanals
+        .filter(c => !removedCanals.some(rc => rc.id === c.id))
+        .forEach(c => allItems.push({ ...c, itemType: 'canal', isUserAdded: false }));
+      
+      userBuildings
+        .filter(b => b.type === 'canal')
+        .forEach(c => allItems.push({ ...c, itemType: 'canal', isUserAdded: true }));
+      
+      // Add streets
+      existingStreets
+        .filter(s => !removedStreets.some(rs => rs.id === s.id))
+        .forEach(s => allItems.push({ ...s, itemType: 'street', isUserAdded: false }));
+      
+      userBuildings
+        .filter(b => b.type === 'street')
+        .forEach(s => allItems.push({ ...s, itemType: 'street', isUserAdded: true }));
+      
+      if (allItems.length === 0) {
+        Alert.alert('No Items', 'No items to remove in this area.');
+        return;
+      }
+
+      // Find nearest item
+      const nearestItem = allItems.reduce((nearest, item) => {
+        let itemCoord = null;
+        let minDist = Infinity;
+        
+        if (item.coordinate) {
+          itemCoord = item.coordinate;
+        } else if (item.coordinates && item.coordinates.length > 0) {
+          // For lines (canals/streets), find closest point on line
+          item.coordinates.forEach(coord => {
+            const dist = Math.sqrt(
+              Math.pow(coord.latitude - coordinate.latitude, 2) +
+              Math.pow(coord.longitude - coordinate.longitude, 2)
+            );
+            if (dist < minDist) {
+              minDist = dist;
+              itemCoord = coord;
+            }
+          });
+        }
+        
+        if (!itemCoord) return nearest;
+        
+        const dist = Math.sqrt(
+          Math.pow(itemCoord.latitude - coordinate.latitude, 2) +
+          Math.pow(itemCoord.longitude - coordinate.longitude, 2)
+        );
+        
+        const nearestDist = nearest ? (() => {
+          const nearestCoord = nearest.coordinate || (nearest.coordinates && nearest.coordinates[0]);
+          if (!nearestCoord) return Infinity;
+          return Math.sqrt(
+            Math.pow(nearestCoord.latitude - coordinate.latitude, 2) +
+            Math.pow(nearestCoord.longitude - coordinate.longitude, 2)
+          );
+        })() : Infinity;
+        
+        return dist < nearestDist ? { ...item, itemCoord, dist } : nearest;
+      }, null);
+
+      if (nearestItem) {
+        if (nearestItem.isUserAdded) {
+          // Remove user-added item
+          setUserBuildings(userBuildings.filter(b => b.id !== nearestItem.id));
+        } else {
+          // Remove OSM item
+          const itemType = nearestItem.itemType;
+          if (itemType === 'building') {
+            setRemovedBuildings([...removedBuildings, nearestItem]);
+          } else if (itemType === 'tree') {
+            setRemovedTrees([...removedTrees, nearestItem]);
+          } else if (itemType === 'canal') {
+            setRemovedCanals([...removedCanals, nearestItem]);
+          } else if (itemType === 'street') {
+            setRemovedStreets([...removedStreets, nearestItem]);
+          }
+        }
       }
     }
   };
@@ -255,59 +383,89 @@ export default function WeatherGameScreen() {
             {/* OpenStreetMap Tile Layer */}
             <OpenStreetMapTile />
             
-            {/* Rendered Changes - Show actual buildings and trees on the map */}
-            {showRendered && (
-              <>
-                {/* Existing buildings from OSM - Rendered as Polygons (OSM style) */}
-                {existingBuildings
-                  .filter(building => !removedBuildings.some(rb => rb.id === building.id))
-                  .map((building) => (
-                    <Polygon
-                      key={building.id}
-                      coordinates={generateBuildingPolygon(building.coordinate, 0.00012)}
-                      fillColor="rgba(200, 200, 200, 0.7)"
-                      strokeColor="rgba(150, 150, 150, 0.9)"
-                      strokeWidth={1}
-                      tappable={true}
-                      onPress={() => handleMarkerPress(building)}
-                    />
-                  ))}
-                
-                {/* User-added buildings - Rendered as Polygons (OSM style) */}
-                {userBuildings
-                  .filter(b => b.type === 'building')
-                  .map((building) => (
-                    <Polygon
-                      key={building.id}
-                      coordinates={generateBuildingPolygon(building.coordinate, 0.00012)}
-                      fillColor="rgba(200, 200, 200, 0.7)"
-                      strokeColor="rgba(150, 150, 150, 0.9)"
-                      strokeWidth={1}
-                      tappable={true}
-                      onPress={() => handleMarkerPress(building)}
-                    />
-                  ))}
-                
-                {/* User-added trees - Rendered as Circles (OSM style - green areas) */}
-                {userBuildings
-                  .filter(b => b.type === 'tree')
-                  .map((building) => {
-                    const circle = generateTreeCircle(building.coordinate, 0.0001);
-                    return (
-                      <Circle
-                        key={building.id}
-                        center={circle.center}
-                        radius={circle.radius}
-                        fillColor="rgba(152, 251, 152, 0.6)"
-                        strokeColor="rgba(34, 139, 34, 0.8)"
-                        strokeWidth={1}
-                        tappable={true}
-                        onPress={() => handleMarkerPress(building)}
-                      />
-                    );
-                  })}
-              </>
-            )}
+            {/* Always show canals on the map */}
+            {/* Existing canals from OSM (not removed) */}
+            {existingCanals
+              .filter(canal => !removedCanals.some(rc => rc.id === canal.id))
+              .map((canal) => (
+                <Polyline
+                  key={canal.id}
+                  coordinates={canal.coordinates}
+                  strokeColor="rgba(59, 130, 246, 0.8)"
+                  strokeWidth={4}
+                  tappable={true}
+                  onPress={() => handleMarkerPress(canal)}
+                />
+              ))}
+            
+            {/* User-added canals */}
+            {userBuildings
+              .filter(b => b.type === 'canal')
+              .map((canal) => (
+                <Polyline
+                  key={canal.id}
+                  coordinates={canal.coordinates}
+                  strokeColor="rgba(34, 197, 94, 0.9)"
+                  strokeWidth={5}
+                  tappable={true}
+                  onPress={() => handleMarkerPress(canal)}
+                />
+              ))}
+            
+            {/* Removed canals (shown in red) */}
+            {removedCanals.map((canal) => (
+              <Polyline
+                key={`removed_${canal.id}`}
+                coordinates={canal.coordinates}
+                strokeColor="rgba(239, 68, 68, 0.6)"
+                strokeWidth={4}
+                lineDashPattern={[5, 5]}
+                tappable={true}
+                onPress={() => handleMarkerPress(canal)}
+              />
+            ))}
+            
+            {/* Always show streets on the map */}
+            {/* Existing streets from OSM (not removed) */}
+            {existingStreets
+              .filter(street => !removedStreets.some(rs => rs.id === street.id))
+              .map((street) => (
+                <Polyline
+                  key={street.id}
+                  coordinates={street.coordinates}
+                  strokeColor="rgba(100, 100, 100, 0.7)"
+                  strokeWidth={3}
+                  tappable={true}
+                  onPress={() => handleMarkerPress(street)}
+                />
+              ))}
+            
+            {/* User-added streets */}
+            {userBuildings
+              .filter(b => b.type === 'street')
+              .map((street) => (
+                <Polyline
+                  key={street.id}
+                  coordinates={street.coordinates}
+                  strokeColor="rgba(16, 185, 129, 0.9)"
+                  strokeWidth={4}
+                  tappable={true}
+                  onPress={() => handleMarkerPress(street)}
+                />
+              ))}
+            
+            {/* Removed streets (shown in red) */}
+            {removedStreets.map((street) => (
+              <Polyline
+                key={`removed_${street.id}`}
+                coordinates={street.coordinates}
+                strokeColor="rgba(239, 68, 68, 0.6)"
+                strokeWidth={3}
+                lineDashPattern={[5, 5]}
+                tappable={true}
+                onPress={() => handleMarkerPress(street)}
+              />
+            ))}
             
             {/* Markers - Only shown when editing (showMarkers = true) */}
             {showMarkers && (
@@ -381,14 +539,6 @@ export default function WeatherGameScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.controlButton, styles.renderButton, showRendered && styles.controlButtonActive]}
-              onPress={() => setShowRendered(!showRendered)}
-            >
-              <Text style={[styles.controlButtonText, showRendered && styles.controlButtonTextActive]}>
-                {showRendered ? '🗺️ Hide Changes' : '🏗️ Render Changes'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.controlButton, styles.keplerButton]}
               onPress={() => setShowKepler(true)}
             >
@@ -396,46 +546,109 @@ export default function WeatherGameScreen() {
                 🌐 3D View
               </Text>
             </TouchableOpacity>
+            
+            {/* Build Button with Dropdown */}
+            <View style={styles.buildButtonContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.controlButton, 
+                  styles.buildButton,
+                  (mode.startsWith('add-') || showBuildMenu) && styles.controlButtonActive
+                ]}
+                onPress={() => {
+                  setShowBuildMenu(!showBuildMenu);
+                  if (showBuildMenu) {
+                    setMode('view');
+                  }
+                }}
+              >
+                <Text style={[
+                  styles.controlButtonText, 
+                  (mode.startsWith('add-') || showBuildMenu) && styles.controlButtonTextActive
+                ]}>
+                  🏗️ Build {showBuildMenu ? '▼' : '▶'}
+                </Text>
+              </TouchableOpacity>
+              
+              {showBuildMenu && (
+                <View style={styles.buildMenu}>
+                  <TouchableOpacity
+                    style={[styles.buildMenuItem, mode === 'add-building' && styles.buildMenuItemActive]}
+                    onPress={() => {
+                      setMode(mode === 'add-building' ? 'view' : 'add-building');
+                      setShowBuildMenu(false);
+                      if (mode !== 'add-building') setShowMarkers(true);
+                    }}
+                  >
+                    <Text style={[styles.buildMenuText, mode === 'add-building' && styles.buildMenuTextActive]}>
+                      🏢 Building
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.buildMenuItem, mode === 'add-tree' && styles.buildMenuItemActive]}
+                    onPress={() => {
+                      setMode(mode === 'add-tree' ? 'view' : 'add-tree');
+                      setShowBuildMenu(false);
+                      if (mode !== 'add-tree') setShowMarkers(true);
+                    }}
+                  >
+                    <Text style={[styles.buildMenuText, mode === 'add-tree' && styles.buildMenuTextActive]}>
+                      🌳 Tree
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.buildMenuItem, mode === 'add-canal' && styles.buildMenuItemActive]}
+                    onPress={() => {
+                      setMode(mode === 'add-canal' ? 'view' : 'add-canal');
+                      setShowBuildMenu(false);
+                      if (mode !== 'add-canal') setShowMarkers(true);
+                    }}
+                  >
+                    <Text style={[styles.buildMenuText, mode === 'add-canal' && styles.buildMenuTextActive]}>
+                      🚣 Canal
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.buildMenuItem, styles.buildMenuItemLast, mode === 'add-street' && styles.buildMenuItemActive]}
+                    onPress={() => {
+                      setMode(mode === 'add-street' ? 'view' : 'add-street');
+                      setShowBuildMenu(false);
+                      if (mode !== 'add-street') setShowMarkers(true);
+                    }}
+                  >
+                    <Text style={[styles.buildMenuText, mode === 'add-street' && styles.buildMenuTextActive]}>
+                      🛣️ Street
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+            
+            {/* Unified Remove Button */}
             <TouchableOpacity
-              style={[styles.controlButton, mode === 'add-building' && styles.controlButtonActive]}
-              onPress={() => {
-                setMode(mode === 'add-building' ? 'view' : 'add-building');
-                if (mode !== 'add-building') setShowMarkers(true); // Auto-show markers when adding
-              }}
-            >
-              <Text style={[styles.controlButtonText, mode === 'add-building' && styles.controlButtonTextActive]}>
-                🏢 Add Building
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.controlButton, mode === 'add-tree' && styles.controlButtonActive]}
-              onPress={() => {
-                setMode(mode === 'add-tree' ? 'view' : 'add-tree');
-                if (mode !== 'add-tree') setShowMarkers(true); // Auto-show markers when adding
-              }}
-            >
-              <Text style={[styles.controlButtonText, mode === 'add-tree' && styles.controlButtonTextActive]}>
-                🌳 Add Tree
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.controlButton, mode === 'remove' && styles.controlButtonActive]}
+              style={[styles.controlButton, styles.removeButton, mode === 'remove' && styles.controlButtonActive]}
               onPress={() => {
                 setMode(mode === 'remove' ? 'view' : 'remove');
-                if (mode !== 'remove') setShowMarkers(true); // Auto-show markers when removing
+                setShowBuildMenu(false);
+                if (mode !== 'remove') setShowMarkers(true);
               }}
             >
               <Text style={[styles.controlButtonText, mode === 'remove' && styles.controlButtonTextActive]}>
                 ➖ Remove
               </Text>
             </TouchableOpacity>
+            
             <TouchableOpacity
               style={styles.controlButton}
               onPress={() => {
                 setUserBuildings([]);
                 setRemovedBuildings([]);
+                setRemovedTrees([]);
+                setRemovedCanals([]);
+                setRemovedStreets([]);
                 setMode('view');
-                setShowRendered(false);
+                setShowBuildMenu(false);
+                setShowMarkers(false);
               }}
             >
               <Text style={styles.controlButtonText}>🔄 Reset</Text>
@@ -447,49 +660,43 @@ export default function WeatherGameScreen() {
         <View style={styles.statsPanel}>
           <View style={styles.statsHeader}>
             <Text style={styles.statsTitle}>🌍 Weather Impact</Text>
-            <Text style={styles.modeIndicator}>
-              {showRendered ? '🏗️ Changes Rendered' : showMarkers ? '📍 Markers Visible' : '🗺️ OSM Map'} | {' '}
-              {mode === 'add-building' ? 'Tap map to add buildings' : 
-               mode === 'add-tree' ? 'Tap map to add trees' :
-               mode === 'remove' ? `Tap buildings to remove (${existingBuildings.length - removedBuildings.length} available)` : 
-               `Buildings: ${existingBuildings.length - removedBuildings.length}/${existingBuildings.length} remaining`}
-            </Text>
           </View>
 
-          <View style={styles.weatherGrid}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={true}
+            contentContainerStyle={styles.weatherScrollContainer}
+            style={styles.weatherScrollView}
+          >
             <StatCard
               icon="🌡️"
               label="Temperature"
               value={`${currentWeather.temperature.toFixed(1)}°C`}
               change={impact?.temp}
+              baseValue={baseWeather?.temperature}
             />
             <StatCard
               icon="💨"
               label="Wind Speed"
               value={`${currentWeather.windSpeed.toFixed(1)} km/h`}
               change={impact?.wind}
+              baseValue={baseWeather?.windSpeed}
             />
             <StatCard
               icon="💧"
               label="Humidity"
               value={`${currentWeather.humidity.toFixed(1)}%`}
               change={impact?.humidity}
+              baseValue={baseWeather?.humidity}
             />
             <StatCard
               icon="🌍"
               label="CO₂"
               value={`${currentWeather.co2.toFixed(1)} ppm`}
               change={impact?.co2}
+              baseValue={baseWeather?.co2}
             />
-          </View>
-
-          <View style={styles.buildingsInfo}>
-            <Text style={styles.buildingsCount}>
-              Existing: {existingBuildings.length - removedBuildings.length}/{existingBuildings.length} buildings | 
-              Removed: {removedBuildings.length} | 
-              Added: {userBuildings.filter(b => b.type === 'building').length} buildings, {userBuildings.filter(b => b.type === 'tree').length} trees
-            </Text>
-          </View>
+          </ScrollView>
         </View>
 
         {/* Kepler.gl 3D Visualization Modal */}
@@ -497,8 +704,14 @@ export default function WeatherGameScreen() {
           visible={showKepler}
           onClose={() => setShowKepler(false)}
           existingBuildings={existingBuildings}
+          existingTrees={existingTrees}
+          existingCanals={existingCanals}
+          existingStreets={existingStreets}
           userBuildings={userBuildings}
           removedBuildings={removedBuildings}
+          removedTrees={removedTrees}
+          removedCanals={removedCanals}
+          removedStreets={removedStreets}
           location={location}
         />
       </LinearGradient>
@@ -506,24 +719,34 @@ export default function WeatherGameScreen() {
   );
 }
 
-function StatCard({ icon, label, value, change }) {
+function StatCard({ icon, label, value, change, baseValue }) {
   const changeValue = parseFloat(change || 0);
   const isPositive = changeValue > 0;
   const isNegative = changeValue < 0;
+  const hasChange = changeValue !== 0;
 
   return (
     <View style={styles.statCard}>
       <Text style={styles.statIcon}>{icon}</Text>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
-      {changeValue !== 0 && (
-        <Text style={[
-          styles.statChange,
-          isPositive && styles.statChangePositive,
-          isNegative && styles.statChangeNegative,
-        ]}>
-          {isPositive ? '↑' : '↓'} {Math.abs(changeValue).toFixed(1)}
-        </Text>
+      {hasChange ? (
+        <View style={styles.changeContainer}>
+          <Text style={[
+            styles.statChange,
+            isPositive && styles.statChangePositive,
+            isNegative && styles.statChangeNegative,
+          ]}>
+            {isPositive ? '↑' : '↓'} {Math.abs(changeValue).toFixed(1)}
+          </Text>
+          {baseValue && (
+            <Text style={styles.baseValue}>
+              Base: {baseValue.toFixed(1)}
+            </Text>
+          )}
+        </View>
+      ) : (
+        <Text style={styles.noChange}>No change</Text>
       )}
     </View>
   );
@@ -582,11 +805,49 @@ const styles = StyleSheet.create({
   showMarkersButton: {
     backgroundColor: 'rgba(59, 130, 246, 0.9)', // Blue for markers
   },
-  renderButton: {
-    backgroundColor: 'rgba(16, 185, 129, 0.9)', // Green for render
-  },
   keplerButton: {
     backgroundColor: 'rgba(139, 92, 246, 0.9)', // Purple for 3D view
+  },
+  buildButton: {
+    backgroundColor: 'rgba(16, 185, 129, 0.9)', // Green for build
+  },
+  removeButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.9)', // Red for remove
+  },
+  buildButtonContainer: {
+    position: 'relative',
+  },
+  buildMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+    borderRadius: theme.borderRadius.md,
+    minWidth: 140,
+    ...theme.shadows.lg,
+    zIndex: 1000,
+    overflow: 'hidden',
+  },
+  buildMenuItem: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  buildMenuItemLast: {
+    borderBottomWidth: 0,
+  },
+  buildMenuItemActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  buildMenuText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#000',
+  },
+  buildMenuTextActive: {
+    color: '#FFF',
   },
   controlButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
@@ -635,58 +896,61 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderTopLeftRadius: theme.borderRadius.xl,
     borderTopRightRadius: theme.borderRadius.xl,
-    padding: theme.spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? 100 : 80,
-    maxHeight: height * 0.4,
+    padding: theme.spacing.md,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 40,
+    maxHeight: height * 0.25,
   },
   statsHeader: {
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
   },
   statsTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
     color: theme.colors.text,
     marginBottom: theme.spacing.xs,
   },
-  modeIndicator: {
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-    fontStyle: 'italic',
+  weatherScrollView: {
+    marginBottom: theme.spacing.sm,
   },
-  weatherGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.md,
+  weatherScrollContainer: {
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
   },
   statCard: {
     backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
-    width: '48%',
-    marginBottom: theme.spacing.sm,
+    width: 140,
+    marginRight: theme.spacing.sm,
     alignItems: 'center',
+    justifyContent: 'center',
     ...theme.shadows.sm,
+    minHeight: 120,
   },
   statIcon: {
-    fontSize: 32,
-    marginBottom: theme.spacing.xs,
+    fontSize: 24,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: theme.colors.textSecondary,
-    marginBottom: 4,
+    marginBottom: 2,
     textAlign: 'center',
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     color: theme.colors.text,
-    marginBottom: 4,
+    marginBottom: 2,
+  },
+  changeContainer: {
+    alignItems: 'center',
+    marginTop: 4,
   },
   statChange: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   statChangePositive: {
     color: theme.colors.error,
@@ -694,15 +958,15 @@ const styles = StyleSheet.create({
   statChangeNegative: {
     color: theme.colors.success,
   },
-  buildingsInfo: {
-    marginTop: theme.spacing.sm,
-    paddingTop: theme.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  buildingsCount: {
-    fontSize: 14,
+  baseValue: {
+    fontSize: 9,
     color: theme.colors.textSecondary,
-    textAlign: 'center',
+    opacity: 0.7,
+  },
+  noChange: {
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    fontStyle: 'italic',
+    marginTop: 4,
   },
 });

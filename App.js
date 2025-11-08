@@ -21,17 +21,17 @@ export default function App() {
               backgroundColor: 'rgba(255, 255, 255, 0.95)',
               borderTopColor: 'rgba(0, 0, 0, 0.1)',
               borderTopWidth: 1,
-              paddingTop: 8,
-              paddingBottom: Platform.OS === 'ios' ? 20 : 8,
-              height: Platform.OS === 'ios' ? 85 : 65,
+              paddingTop: 4,
+              paddingBottom: Platform.OS === 'ios' ? 12 : 4,
+              height: Platform.OS === 'ios' ? 60 : 50,
               position: 'absolute',
             },
             tabBarActiveTintColor: theme.colors.primary,
             tabBarInactiveTintColor: '#999',
             tabBarLabelStyle: {
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: '600',
-              marginTop: 4,
+              marginTop: 2,
             },
           }}
         >
@@ -56,5 +56,5 @@ export default function App() {
 }
 
 function TabIcon({ icon, color }) {
-  return <Text style={{ fontSize: 24 }}>{icon}</Text>;
+  return <Text style={{ fontSize: 20 }}>{icon}</Text>;
 }

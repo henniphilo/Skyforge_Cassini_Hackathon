@@ -8,13 +8,30 @@ export default function KeplerGLView({
   visible, 
   onClose, 
   existingBuildings, 
+  existingTrees = [],
+  existingCanals = [],
+  existingStreets = [],
   userBuildings, 
-  removedBuildings, 
+  removedBuildings,
+  removedTrees = [],
+  removedCanals = [],
+  removedStreets = [],
   location 
 }) {
   const webViewRef = useRef(null);
 
-  const geoJsonData = convertToGeoJSON(existingBuildings, userBuildings, removedBuildings, location);
+  const geoJsonData = convertToGeoJSON(
+    existingBuildings, 
+    userBuildings, 
+    removedBuildings, 
+    location, 
+    existingTrees,
+    existingCanals,
+    existingStreets,
+    removedTrees,
+    removedCanals,
+    removedStreets
+  );
   const htmlContent = generateDeckGLHTML(geoJsonData, location);
 
   return (

@@ -9,9 +9,26 @@
  * @param {Array} userBuildings - User-added buildings and trees
  * @param {Array} removedBuildings - Removed buildings
  * @param {Object} location - Current location
+ * @param {Array} existingTrees - Existing trees from OSM (optional)
+ * @param {Array} existingCanals - Existing canals from OSM (optional)
+ * @param {Array} existingStreets - Existing streets from OSM (optional)
+ * @param {Array} removedTrees - Removed trees (optional)
+ * @param {Array} removedCanals - Removed canals (optional)
+ * @param {Array} removedStreets - Removed streets (optional)
  * @returns {Object} GeoJSON FeatureCollection
  */
-export function convertToGeoJSON(existingBuildings, userBuildings, removedBuildings, location) {
+export function convertToGeoJSON(
+  existingBuildings, 
+  userBuildings, 
+  removedBuildings, 
+  location, 
+  existingTrees = [],
+  existingCanals = [],
+  existingStreets = [],
+  removedTrees = [],
+  removedCanals = [],
+  removedStreets = []
+) {
   const features = [];
 
   // Add existing buildings (not removed) - with polygons if available
@@ -84,6 +101,24 @@ export function convertToGeoJSON(existingBuildings, userBuildings, removedBuildi
       }
     });
 
+  // Add existing trees from OSM (not removed)
+  existingTrees
+    .filter(tree => !removedTrees.some(rt => rt.id === tree.id))
+    .forEach((tree) => {
+      features.push({
+        type: 'Feature',
+        properties: {
+          type: 'tree',
+          status: 'existing',
+          name: tree.name || null,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [tree.coordinate.longitude, tree.coordinate.latitude],
+        },
+      });
+    });
+
   // Add user-added trees
   userBuildings
     .filter(b => b.type === 'tree')
@@ -99,6 +134,86 @@ export function convertToGeoJSON(existingBuildings, userBuildings, removedBuildi
           coordinates: [building.coordinate.longitude, building.coordinate.latitude],
         },
       });
+    });
+
+  // Add existing canals from OSM (not removed)
+  existingCanals
+    .filter(canal => !removedCanals.some(rc => rc.id === canal.id))
+    .forEach((canal) => {
+      if (canal.coordinates && canal.coordinates.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            type: 'canal',
+            status: 'existing',
+            waterwayType: canal.waterwayType || 'canal',
+            name: canal.name || null,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: canal.coordinates.map(coord => [coord.longitude, coord.latitude]),
+          },
+        });
+      }
+    });
+
+  // Add user-added canals
+  userBuildings
+    .filter(b => b.type === 'canal')
+    .forEach((canal) => {
+      if (canal.coordinates && canal.coordinates.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            type: 'canal',
+            status: 'added',
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: canal.coordinates.map(coord => [coord.longitude, coord.latitude]),
+          },
+        });
+      }
+    });
+
+  // Add existing streets from OSM (not removed)
+  existingStreets
+    .filter(street => !removedStreets.some(rs => rs.id === street.id))
+    .forEach((street) => {
+      if (street.coordinates && street.coordinates.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            type: 'street',
+            status: 'existing',
+            highwayType: street.highwayType || 'street',
+            name: street.name || null,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: street.coordinates.map(coord => [coord.longitude, coord.latitude]),
+          },
+        });
+      }
+    });
+
+  // Add user-added streets
+  userBuildings
+    .filter(b => b.type === 'street')
+    .forEach((street) => {
+      if (street.coordinates && street.coordinates.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            type: 'street',
+            status: 'added',
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: street.coordinates.map(coord => [coord.longitude, coord.latitude]),
+          },
+        });
+      }
     });
 
   // Add removed buildings (for visualization) - with polygons if available
@@ -361,9 +476,11 @@ export function generateDeckGLHTML(geoJsonData, location) {
     <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;">🌐 3D Visualization</div>
     <div style="margin-bottom: 4px;">Drag to rotate • Pinch to zoom</div>
     <div style="margin-top: 8px; font-size: 11px; opacity: 0.9; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">
-      <div>🔵 Blue: Existing Buildings</div>
-      <div>🟢 Green: Added Buildings/Trees</div>
-      <div>🔴 Red: Removed Buildings</div>
+      <div>🔵 Blue: Existing Buildings/Canals</div>
+      <div>🟢 Green: Added Items</div>
+      <div>🌳 Dark Green: OSM Trees</div>
+      <div>🛣️ Gray: Existing Streets</div>
+      <div>🔴 Red: Removed Items</div>
     </div>
   </div>
   <div id="error" class="error" style="display: none;"></div>
@@ -398,64 +515,162 @@ export function generateDeckGLHTML(geoJsonData, location) {
             return;
           }
 
-          // Convert GeoJSON to 3D building/tree shapes
+          // Convert GeoJSON to 3D building/tree/canal/street shapes
           const buildingPolygons = [];
           const buildingPoints = [];
           const trees = [];
+          const canals = [];
+          const streets = [];
           
           data.features.forEach(f => {
             const isRemoved = f.properties.status === 'removed';
             const isTree = f.properties.type === 'tree';
+            const isCanal = f.properties.type === 'canal';
+            const isStreet = f.properties.type === 'street';
             const isAdded = f.properties.status === 'added';
             
             if (isTree) {
-              // Trees as 3D cylinders
-              trees.push({
-                position: f.geometry.coordinates,
-                color: isAdded ? [34, 197, 94, 240] : [34, 139, 34, 240],
-                radius: 15, // meters
-                height: isRemoved ? 0 : 20, // meters - tree height
-                type: 'tree',
+              // Trees as 3D cylinders with realistic proportions
+              // Skip removed trees (height 0) to avoid green floor effect
+              if (!isRemoved) {
+                const isExisting = f.properties.status === 'existing';
+                trees.push({
+                  position: f.geometry.coordinates,
+                  color: isAdded ? [34, 197, 94, 255] : // Bright green for user-added trees
+                         isExisting ? [22, 163, 74, 255] : // Medium green for OSM trees
+                         [34, 139, 34, 255], // Dark green fallback
+                  radius: 2.5, // meters - tree trunk/canopy radius (realistic size)
+                  height: isAdded ? 15 : 12, // meters - tree height (added trees slightly taller)
+                  type: 'tree',
+                  status: f.properties.status,
+                });
+              }
+            } else if (isCanal && f.geometry.type === 'LineString') {
+              // Canals as 3D lines (water surface)
+              // Skip removed canals to avoid clutter
+              if (!isRemoved) {
+                canals.push({
+                  path: f.geometry.coordinates,
+                  color: isAdded ? [34, 197, 94, 200] : // Bright green for user-added canals
+                         [59, 130, 246, 200], // Blue for existing canals
+                  width: isAdded ? 8 : 6, // meters - canal width
+                  type: 'canal',
+                  status: f.properties.status,
+                });
+              }
+            } else if (isStreet && f.geometry.type === 'LineString') {
+              // Streets as 3D lines (road surface)
+              streets.push({
+                path: f.geometry.coordinates,
+                color: isAdded ? [16, 185, 129, 220] : // Green for user-added streets
+                       isRemoved ? [239, 68, 68, 150] : // Red for removed streets
+                       [100, 100, 100, 200], // Gray for existing streets
+                width: isAdded ? 6 : 5, // meters - street width
+                type: 'street',
                 status: f.properties.status,
               });
-            } else if (f.geometry.type === 'Polygon' && f.geometry.coordinates && f.geometry.coordinates[0]) {
-              // Buildings with polygon geometry - render as 3D extruded polygons
-              const buildingHeight = isRemoved ? 0 : (isAdded ? 25 : 30); // meters
-              buildingPolygons.push({
-                polygon: f.geometry.coordinates[0], // First ring of polygon
-                color: isRemoved ? [239, 68, 68, 200] :
-                       isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
-                height: buildingHeight,
-                type: 'building',
-                status: f.properties.status,
-              });
-            } else {
-              // Buildings as points - render as 3D columns
-              const buildingHeight = isRemoved ? 0 : (isAdded ? 25 : 30); // meters
-              buildingPoints.push({
-                position: f.geometry.coordinates,
-                color: isRemoved ? [239, 68, 68, 200] :
-                       isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
-                width: 20, // meters
-                height: buildingHeight,
-                type: 'building',
-                status: f.properties.status,
-              });
+            } else if (f.properties.type === 'building') {
+              // Buildings - check geometry type to determine rendering method
+              if (f.geometry.type === 'Polygon' && f.geometry.coordinates && f.geometry.coordinates[0]) {
+                // Buildings with polygon geometry - render as 3D extruded polygons
+                // Skip removed buildings (height 0) to avoid green floor effect
+                if (!isRemoved) {
+                  const buildingHeight = isAdded ? 25 : 30; // meters
+                  buildingPolygons.push({
+                    polygon: f.geometry.coordinates[0], // First ring of polygon
+                    color: isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
+                    height: buildingHeight,
+                    type: 'building',
+                    status: f.properties.status,
+                  });
+                }
+              } else if (f.geometry.type === 'Point') {
+                // Buildings as points - render as 3D columns
+                // Skip removed buildings (height 0) to avoid green floor effect
+                if (!isRemoved) {
+                  const buildingHeight = isAdded ? 25 : 30; // meters
+                  buildingPoints.push({
+                    position: f.geometry.coordinates,
+                    color: isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
+                    width: 20, // meters
+                    height: buildingHeight,
+                    type: 'building',
+                    status: f.properties.status,
+                  });
+                }
+              }
             }
           });
 
-          console.log('Initializing deck.gl with', buildingPolygons.length, 'building polygons,', buildingPoints.length, 'building points, and', trees.length, 'trees');
+          console.log('Initializing deck.gl with', buildingPolygons.length, 'building polygons,', buildingPoints.length, 'building points,', trees.length, 'trees,', canals.length, 'canals, and', streets.length, 'streets');
 
-          // Create deck.gl visualization with 3D shapes
+          // Calculate bounds from all data to center the view properly
+          let minLat = Infinity, maxLat = -Infinity;
+          let minLon = Infinity, maxLon = -Infinity;
+          
+          function updateBounds(coords) {
+            if (Array.isArray(coords[0])) {
+              // Array of coordinates (polygon or linestring)
+              coords.forEach(coord => {
+                if (Array.isArray(coord) && coord.length >= 2) {
+                  const lon = coord[0];
+                  const lat = coord[1];
+                  minLat = Math.min(minLat, lat);
+                  maxLat = Math.max(maxLat, lat);
+                  minLon = Math.min(minLon, lon);
+                  maxLon = Math.max(maxLon, lon);
+                }
+              });
+            } else if (coords.length >= 2) {
+              // Single coordinate [lon, lat]
+              const lon = coords[0];
+              const lat = coords[1];
+              minLat = Math.min(minLat, lat);
+              maxLat = Math.max(maxLat, lat);
+              minLon = Math.min(minLon, lon);
+              maxLon = Math.max(maxLon, lon);
+            }
+          }
+          
+          data.features.forEach(f => {
+            if (f.geometry.type === 'Point') {
+              updateBounds(f.geometry.coordinates);
+            } else if (f.geometry.type === 'LineString') {
+              updateBounds(f.geometry.coordinates);
+            } else if (f.geometry.type === 'Polygon') {
+              f.geometry.coordinates.forEach(ring => updateBounds(ring));
+            }
+          });
+          
+          // Use calculated bounds or fallback to location center
+          const viewLat = (minLat !== Infinity && maxLat !== -Infinity) ? (minLat + maxLat) / 2 : centerLat;
+          const viewLon = (minLon !== Infinity && maxLon !== -Infinity) ? (minLon + maxLon) / 2 : centerLon;
+          
+          // Calculate zoom level based on bounds
+          let viewZoom = 15;
+          if (minLat !== Infinity && maxLat !== -Infinity && minLon !== Infinity && maxLon !== -Infinity) {
+            const latRange = maxLat - minLat;
+            const lonRange = maxLon - minLon;
+            const maxRange = Math.max(latRange, lonRange);
+            // Approximate zoom calculation
+            if (maxRange > 0.1) viewZoom = 10;
+            else if (maxRange > 0.05) viewZoom = 11;
+            else if (maxRange > 0.02) viewZoom = 12;
+            else if (maxRange > 0.01) viewZoom = 13;
+            else if (maxRange > 0.005) viewZoom = 14;
+            else viewZoom = 15;
+          }
+
+          // Create deck.gl visualization with 3D shapes and base map
           const deckInstance = new deck.DeckGL({
             container: 'deck-container',
             initialViewState: {
-              longitude: centerLon,
-              latitude: centerLat,
-              zoom: 15,
+              longitude: viewLon,
+              latitude: viewLat,
+              zoom: viewZoom,
               pitch: 60,
               bearing: -17.6,
-              minZoom: 10,
+              minZoom: 8,
               maxZoom: 20,
             },
             controller: true,
@@ -495,23 +710,49 @@ export function generateDeckGLHTML(geoJsonData, location) {
                 lineWidthMinPixels: 2,
                 wireframe: false,
               }),
-              // Trees as 3D cylinders (circular columns)
+              // Trees as 3D cylinders (circular columns) - rendered on top of buildings
               new deck.ColumnLayer({
                 id: 'trees-3d',
                 data: trees,
                 pickable: true,
-                opacity: 0.85,
-                diskResolution: 16, // Smooth circular cylinders
+                opacity: 0.9,
+                diskResolution: 12, // Smooth circular cylinders for trees
                 extruded: true,
                 elevationScale: 1,
                 getPosition: d => d.position,
-                getRadius: d => d.radius, // Use tree radius
+                getRadius: d => d.radius, // Use tree radius (2.5 meters)
                 getFillColor: d => d.color,
-                getLineColor: [34, 139, 34, 255],
+                getLineColor: d => [d.color[0] * 0.7, d.color[1] * 0.7, d.color[2] * 0.7, 255], // Darker outline
                 getElevation: d => d.height,
                 radiusUnits: 'meters',
-                lineWidthMinPixels: 1,
+                lineWidthMinPixels: 1.5,
                 wireframe: false,
+              }),
+              // Canals as 3D paths (water surface)
+              new deck.PathLayer({
+                id: 'canals-3d',
+                data: canals,
+                pickable: true,
+                widthMinPixels: 2,
+                getPath: d => d.path,
+                getColor: d => d.color,
+                getWidth: d => d.width,
+                widthUnits: 'meters',
+                rounded: true,
+                billboard: false,
+              }),
+              // Streets as 3D paths (road surface)
+              new deck.PathLayer({
+                id: 'streets-3d',
+                data: streets,
+                pickable: true,
+                widthMinPixels: 2,
+                getPath: d => d.path,
+                getColor: d => d.color,
+                getWidth: d => d.width,
+                widthUnits: 'meters',
+                rounded: true,
+                billboard: false,
               }),
             ],
             onError: (error) => {
