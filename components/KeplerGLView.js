@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Modal, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { theme } from '../theme';
@@ -16,9 +16,13 @@ export default function KeplerGLView({
   removedTrees = [],
   removedCanals = [],
   removedStreets = [],
-  location 
+  location,
+  weatherData = null,
+  mapRegion = null
 }) {
   const webViewRef = useRef(null);
+  const [showHeat, setShowHeat] = useState(true);
+  const [showWind, setShowWind] = useState(true);
 
   const geoJsonData = convertToGeoJSON(
     existingBuildings, 
@@ -32,7 +36,7 @@ export default function KeplerGLView({
     removedCanals,
     removedStreets
   );
-  const htmlContent = generateDeckGLHTML(geoJsonData, location);
+  const htmlContent = generateDeckGLHTML(geoJsonData, location, weatherData, mapRegion, showHeat, showWind);
 
   return (
     <Modal
@@ -44,9 +48,51 @@ export default function KeplerGLView({
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>3D Visualization</Text>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>✕ Close</Text>
-          </TouchableOpacity>
+          <View style={styles.controls}>
+            <TouchableOpacity 
+              style={[styles.toggleButton, showHeat && styles.toggleButtonActive]}
+              onPress={() => {
+                const newValue = !showHeat;
+                setShowHeat(newValue);
+                // Send message to WebView to toggle heat
+                webViewRef.current?.injectJavaScript(`
+                  (function() {
+                    if (window.updateLayerVisibility) {
+                      window.updateLayerVisibility('heat-map', ${newValue});
+                    }
+                  })();
+                  true;
+                `);
+              }}
+            >
+              <Text style={[styles.toggleButtonText, showHeat && styles.toggleButtonTextActive]}>
+                🌡️ Heat
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.toggleButton, showWind && styles.toggleButtonActive]}
+              onPress={() => {
+                const newValue = !showWind;
+                setShowWind(newValue);
+                // Send message to WebView to toggle wind
+                webViewRef.current?.injectJavaScript(`
+                  (function() {
+                    if (window.updateLayerVisibility) {
+                      window.updateLayerVisibility('wind-arrows', ${newValue});
+                    }
+                  })();
+                  true;
+                `);
+              }}
+            >
+              <Text style={[styles.toggleButtonText, showWind && styles.toggleButtonTextActive]}>
+                💨 Wind
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+              <Text style={styles.closeButtonText}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         <WebView
           ref={webViewRef}
@@ -107,6 +153,31 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.9)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+  },
+  toggleButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  toggleButtonActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  toggleButtonText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  toggleButtonTextActive: {
+    color: '#FFF',
   },
   title: {
     fontSize: 20,
