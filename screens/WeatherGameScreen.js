@@ -123,15 +123,20 @@ export default function WeatherGameScreen({ onBackToLanding }) {
     const buildingsCount = userBuildings.filter(b => b.type === 'building').length;
     const streetsCount = userBuildings.filter(b => b.type === 'street').length;
     
-    // Life token: based on trees planted (max 100)
-    const lifeCharge = Math.min(100, treesCount * 10);
+    // Base mockup values (starting from previous iterations)
+    const BASE_LIFE = 13;     // 22% of 60
+    const BASE_SOCIAL = 39;   // 56% of 70 (closest to 55%)
+    const BASE_ENERGY = 6;    // 12% of 50
+    
+    // Life token: based on trees planted, add to base (max 100)
+    const lifeCharge = Math.min(100, BASE_LIFE + (treesCount * 10));
     
     // Social token: based on buildings (added increases, removed decreases)
-    // Start at 50, +5 per building added, -5 per building removed
-    const socialCharge = Math.max(0, Math.min(100, 50 + (buildingsCount * 5) - (removedBuildings.length * 5)));
+    // Start from base, +5 per building added, -5 per building removed
+    const socialCharge = Math.max(0, Math.min(100, BASE_SOCIAL + (buildingsCount * 5) - (removedBuildings.length * 5)));
     
-    // Energy token: based on streets built (max 100)
-    const energyCharge = Math.min(100, streetsCount * 12);
+    // Energy token: based on streets built, add to base (max 100)
+    const energyCharge = Math.min(100, BASE_ENERGY + (streetsCount * 12));
     
     setTokenCharges({
       life: lifeCharge,
@@ -778,39 +783,47 @@ export default function WeatherGameScreen({ onBackToLanding }) {
             <TouchableOpacity
               style={[styles.controlButton, styles.keplerButton]}
               onPress={() => {
-                // Use current map region if available, otherwise use location
+                // Always ensure map region is set before opening 3D view
+                // Use current map region if available (most accurate)
                 if (currentMapRegion) {
                   setMapRegion(currentMapRegion);
+                  setShowKepler(true);
                 } else if (mapRef.current) {
-                  // Try to get camera position
+                  // Try to get camera position from map
                   mapRef.current.getCamera().then((camera) => {
-                    setMapRegion({
+                    const region = {
                       latitude: camera.center.latitude,
                       longitude: camera.center.longitude,
-                      latitudeDelta: camera.altitude / 111000 * 2,
-                      longitudeDelta: camera.altitude / 111000 * 2,
-                    });
+                      // Calculate delta from altitude (more accurate, ensure closer zoom)
+                      latitudeDelta: Math.max(0.002, Math.min(0.02, camera.altitude / 111000 * 2)),
+                      longitudeDelta: Math.max(0.002, Math.min(0.02, camera.altitude / 111000 * 2)),
+                    };
+                    setMapRegion(region);
+                    setShowKepler(true);
                   }).catch(() => {
-                    // Fallback: use current location
+                    // Fallback: use current location with close zoom
                     if (location) {
                       setMapRegion({
                         latitude: location.latitude,
                         longitude: location.longitude,
-                        latitudeDelta: 0.01,
-                        longitudeDelta: 0.01,
+                        latitudeDelta: 0.005, // Closer zoom
+                        longitudeDelta: 0.005,
                       });
                     }
+                    setShowKepler(true);
                   });
                 } else if (location) {
-                  // Fallback: use current location
+                  // Fallback: use current location with close zoom
                   setMapRegion({
                     latitude: location.latitude,
                     longitude: location.longitude,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
+                    latitudeDelta: 0.005, // Closer zoom
+                    longitudeDelta: 0.005,
                   });
+                  setShowKepler(true);
+                } else {
+                  setShowKepler(true);
                 }
-                setShowKepler(true);
               }}
             >
               <Text style={styles.controlButtonText}>
