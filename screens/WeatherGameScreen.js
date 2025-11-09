@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions, ScrollView, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, Polygon, Circle, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { theme } from '../theme';
 import { getCopernicusWeatherData, calculateWeatherImpact } from '../src/services/copernicusService';
 import { fetchBuildingsSimple, fetchTreesFromOSM, fetchCanalsFromOSM, fetchStreetsFromOSM } from '../src/services/openStreetMapService';
+import { calculateSentinelPassTimes, formatTimeSince } from '../src/services/satelliteService';
 import OpenStreetMapTile from '../components/OpenStreetMapTile';
 import KeplerGLView from '../components/KeplerGLView';
 
@@ -29,7 +30,21 @@ export default function WeatherGameScreen() {
   const [showMarkers, setShowMarkers] = useState(false); // Toggle markers visibility for editing
   const [showKepler, setShowKepler] = useState(false); // Toggle Kepler.gl 3D visualization
   const [showBuildMenu, setShowBuildMenu] = useState(false); // Toggle build dropdown menu
+  const [mapRegion, setMapRegion] = useState(null); // Current map region for 3D view
+  const [currentMapRegion, setCurrentMapRegion] = useState(null); // Track current map region
   const mapRef = useRef(null);
+  
+  // Game mechanics state
+  const SENTINEL_ORBIT_TIME = 100 * 60; // 100 minutes in seconds (Sentinel orbit time)
+  const [satelliteTimeRemaining, setSatelliteTimeRemaining] = useState(SENTINEL_ORBIT_TIME); // Time until next Sentinel pass
+  const [timeSinceLastPass, setTimeSinceLastPass] = useState(0); // Time since last Sentinel pass
+  const [gameIteration, setGameIteration] = useState(0); // Current game iteration
+  const [tokenCharges, setTokenCharges] = useState({
+    life: 0,      // Trees planted
+    social: 50,   // Buildings added/removed (starts at 50 for balance)
+    water: 0,     // Canals built
+    energy: 0,    // Streets built
+  });
 
   useEffect(() => {
     initializeLocation();
@@ -40,6 +55,68 @@ export default function WeatherGameScreen() {
       updateWeatherWithModifications();
     }
   }, [userBuildings, removedBuildings, baseWeather]);
+
+  // Calculate actual Sentinel pass times when location is available
+  useEffect(() => {
+    if (location) {
+      const passTimes = calculateSentinelPassTimes(location.latitude, location.longitude);
+      setSatelliteTimeRemaining(passTimes.timeUntilNextPass);
+      setTimeSinceLastPass(passTimes.timeSinceLastPass);
+    }
+  }, [location]);
+
+  // Satellite orbit timer - update every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSatelliteTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Sentinel completed orbit - advance game iteration
+          setGameIteration((prevIter) => prevIter + 1);
+          // Recalculate pass times
+          if (location) {
+            const passTimes = calculateSentinelPassTimes(location.latitude, location.longitude);
+            setTimeSinceLastPass(0);
+            return passTimes.timeUntilNextPass;
+          }
+          return SENTINEL_ORBIT_TIME;
+        }
+        return prev - 1;
+      });
+      
+      // Update time since last pass
+      setTimeSinceLastPass((prev) => prev + 1);
+    }, 1000); // Update every second
+
+    return () => clearInterval(timer);
+  }, [location]);
+
+  // Update token charges based on actions
+  useEffect(() => {
+    const treesCount = userBuildings.filter(b => b.type === 'tree').length;
+    const buildingsCount = userBuildings.filter(b => b.type === 'building').length;
+    const canalsCount = userBuildings.filter(b => b.type === 'canal').length;
+    const streetsCount = userBuildings.filter(b => b.type === 'street').length;
+    
+    // Life token: based on trees planted (max 100)
+    const lifeCharge = Math.min(100, treesCount * 10);
+    
+    // Social token: based on buildings (added increases, removed decreases)
+    // Start at 50, +5 per building added, -5 per building removed
+    const socialCharge = Math.max(0, Math.min(100, 50 + (buildingsCount * 5) - (removedBuildings.length * 5)));
+    
+    // Water token: based on canals built (max 100)
+    const waterCharge = Math.min(100, canalsCount * 15);
+    
+    // Energy token: based on streets built (max 100)
+    const energyCharge = Math.min(100, streetsCount * 12);
+    
+    setTokenCharges({
+      life: lifeCharge,
+      social: socialCharge,
+      water: waterCharge,
+      energy: energyCharge,
+    });
+  }, [userBuildings, removedBuildings]);
 
   const initializeLocation = async () => {
     try {
@@ -158,143 +235,229 @@ export default function WeatherGameScreen() {
       };
       setUserBuildings([...userBuildings, newItem]);
     } else if (mode === 'remove') {
-      // Find nearest existing building (not already removed, not user-added)
-      const availableBuildings = existingBuildings.filter(
-        b => !removedBuildings.some(rb => rb.id === b.id)
-      );
-      
-      if (availableBuildings.length === 0) {
-        Alert.alert('No Buildings', 'No more buildings to remove in this area.');
-        return;
-      }
-
-      const nearestBuilding = availableBuildings.reduce((nearest, building) => {
-        const dist = Math.sqrt(
-          Math.pow(building.coordinate.latitude - coordinate.latitude, 2) +
-          Math.pow(building.coordinate.longitude - coordinate.longitude, 2)
-        );
-        const nearestDist = nearest ? Math.sqrt(
-          Math.pow(nearest.coordinate.latitude - coordinate.latitude, 2) +
-          Math.pow(nearest.coordinate.longitude - coordinate.longitude, 2)
-        ) : Infinity;
-        return dist < nearestDist ? building : nearest;
-      }, null);
-
-      if (nearestBuilding) {
-        setRemovedBuildings([...removedBuildings, nearestBuilding]);
-      }
-    } else if (mode === 'remove') {
       // Unified remove mode - finds and removes the nearest item of any type
       const allItems = [];
       
-      // Add buildings
-      existingBuildings
-        .filter(b => !removedBuildings.some(rb => rb.id === b.id))
-        .forEach(b => allItems.push({ ...b, itemType: 'building', isUserAdded: false }));
+      // Add buildings (with null checks)
+      if (Array.isArray(existingBuildings) && Array.isArray(removedBuildings)) {
+        existingBuildings
+          .filter(b => b && b.id && b.coordinate && !removedBuildings.some(rb => rb && rb.id === b.id))
+          .forEach(b => {
+            if (b && b.coordinate) {
+              allItems.push({ ...b, itemType: 'building', isUserAdded: false });
+            }
+          });
+      }
       
-      // Add trees
-      existingTrees
-        .filter(t => !removedTrees.some(rt => rt.id === t.id))
-        .forEach(t => allItems.push({ ...t, itemType: 'tree', isUserAdded: false }));
+      // Add trees (with null checks)
+      if (Array.isArray(existingTrees) && Array.isArray(removedTrees)) {
+        existingTrees
+          .filter(t => t && t.id && t.coordinate && !removedTrees.some(rt => rt && rt.id === t.id))
+          .forEach(t => {
+            if (t && t.coordinate) {
+              allItems.push({ ...t, itemType: 'tree', isUserAdded: false });
+            }
+          });
+      }
       
-      userBuildings
-        .filter(b => b.type === 'tree')
-        .forEach(t => allItems.push({ ...t, itemType: 'tree', isUserAdded: true }));
+      if (Array.isArray(userBuildings)) {
+        userBuildings
+          .filter(b => b && b.type === 'tree' && b.coordinate)
+          .forEach(t => {
+            if (t && t.coordinate) {
+              allItems.push({ ...t, itemType: 'tree', isUserAdded: true });
+            }
+          });
+      }
       
-      // Add canals
-      existingCanals
-        .filter(c => !removedCanals.some(rc => rc.id === c.id))
-        .forEach(c => allItems.push({ ...c, itemType: 'canal', isUserAdded: false }));
+      // Add canals (with null checks)
+      if (Array.isArray(existingCanals) && Array.isArray(removedCanals)) {
+        existingCanals
+          .filter(c => c && c.id && c.coordinates && !removedCanals.some(rc => rc && rc.id === c.id))
+          .forEach(c => {
+            if (c && c.coordinates) {
+              allItems.push({ ...c, itemType: 'canal', isUserAdded: false });
+            }
+          });
+      }
       
-      userBuildings
-        .filter(b => b.type === 'canal')
-        .forEach(c => allItems.push({ ...c, itemType: 'canal', isUserAdded: true }));
+      if (Array.isArray(userBuildings)) {
+        userBuildings
+          .filter(b => b && b.type === 'canal' && b.coordinates)
+          .forEach(c => {
+            if (c && c.coordinates) {
+              allItems.push({ ...c, itemType: 'canal', isUserAdded: true });
+            }
+          });
+      }
       
-      // Add streets
-      existingStreets
-        .filter(s => !removedStreets.some(rs => rs.id === s.id))
-        .forEach(s => allItems.push({ ...s, itemType: 'street', isUserAdded: false }));
+      // Add streets (with null checks)
+      if (Array.isArray(existingStreets) && Array.isArray(removedStreets)) {
+        existingStreets
+          .filter(s => s && s.id && s.coordinates && !removedStreets.some(rs => rs && rs.id === s.id))
+          .forEach(s => {
+            if (s && s.coordinates) {
+              allItems.push({ ...s, itemType: 'street', isUserAdded: false });
+            }
+          });
+      }
       
-      userBuildings
-        .filter(b => b.type === 'street')
-        .forEach(s => allItems.push({ ...s, itemType: 'street', isUserAdded: true }));
+      if (Array.isArray(userBuildings)) {
+        userBuildings
+          .filter(b => b && b.type === 'street' && b.coordinates)
+          .forEach(s => {
+            if (s && s.coordinates) {
+              allItems.push({ ...s, itemType: 'street', isUserAdded: true });
+            }
+          });
+      }
       
       if (allItems.length === 0) {
         Alert.alert('No Items', 'No items to remove in this area.');
         return;
       }
 
-      // Find nearest item
+      // Find nearest item (with safety checks)
       const nearestItem = allItems.reduce((nearest, item) => {
+        if (!item) return nearest;
+        
         let itemCoord = null;
         let minDist = Infinity;
         
-        if (item.coordinate) {
-          itemCoord = item.coordinate;
-        } else if (item.coordinates && item.coordinates.length > 0) {
-          // For lines (canals/streets), find closest point on line
-          item.coordinates.forEach(coord => {
-            const dist = Math.sqrt(
-              Math.pow(coord.latitude - coordinate.latitude, 2) +
-              Math.pow(coord.longitude - coordinate.longitude, 2)
-            );
-            if (dist < minDist) {
-              minDist = dist;
-              itemCoord = coord;
-            }
-          });
-        }
-        
-        if (!itemCoord) return nearest;
-        
-        const dist = Math.sqrt(
-          Math.pow(itemCoord.latitude - coordinate.latitude, 2) +
-          Math.pow(itemCoord.longitude - coordinate.longitude, 2)
-        );
-        
-        const nearestDist = nearest ? (() => {
-          const nearestCoord = nearest.coordinate || (nearest.coordinates && nearest.coordinates[0]);
-          if (!nearestCoord) return Infinity;
-          return Math.sqrt(
-            Math.pow(nearestCoord.latitude - coordinate.latitude, 2) +
-            Math.pow(nearestCoord.longitude - coordinate.longitude, 2)
+        try {
+          if (item.coordinate && item.coordinate.latitude !== undefined && item.coordinate.longitude !== undefined) {
+            itemCoord = item.coordinate;
+          } else if (item.coordinates && Array.isArray(item.coordinates) && item.coordinates.length > 0) {
+            // For lines (canals/streets), find closest point on line
+            item.coordinates.forEach(coord => {
+              if (coord && coord.latitude !== undefined && coord.longitude !== undefined) {
+                const dist = Math.sqrt(
+                  Math.pow(coord.latitude - coordinate.latitude, 2) +
+                  Math.pow(coord.longitude - coordinate.longitude, 2)
+                );
+                if (dist < minDist) {
+                  minDist = dist;
+                  itemCoord = coord;
+                }
+              }
+            });
+          }
+          
+          if (!itemCoord || itemCoord.latitude === undefined || itemCoord.longitude === undefined) {
+            return nearest;
+          }
+          
+          const dist = Math.sqrt(
+            Math.pow(itemCoord.latitude - coordinate.latitude, 2) +
+            Math.pow(itemCoord.longitude - coordinate.longitude, 2)
           );
-        })() : Infinity;
-        
-        return dist < nearestDist ? { ...item, itemCoord, dist } : nearest;
+          
+          const nearestDist = nearest ? (() => {
+            const nearestCoord = nearest.coordinate || (nearest.coordinates && Array.isArray(nearest.coordinates) && nearest.coordinates[0]);
+            if (!nearestCoord || nearestCoord.latitude === undefined || nearestCoord.longitude === undefined) {
+              return Infinity;
+            }
+            return Math.sqrt(
+              Math.pow(nearestCoord.latitude - coordinate.latitude, 2) +
+              Math.pow(nearestCoord.longitude - coordinate.longitude, 2)
+            );
+          })() : Infinity;
+          
+          return dist < nearestDist ? { ...item, itemCoord, dist } : nearest;
+        } catch (error) {
+          console.error('Error calculating distance:', error);
+          return nearest;
+        }
       }, null);
 
-      if (nearestItem) {
-        if (nearestItem.isUserAdded) {
-          // Remove user-added item
-          setUserBuildings(userBuildings.filter(b => b.id !== nearestItem.id));
-        } else {
-          // Remove OSM item
-          const itemType = nearestItem.itemType;
-          if (itemType === 'building') {
-            setRemovedBuildings([...removedBuildings, nearestItem]);
-          } else if (itemType === 'tree') {
-            setRemovedTrees([...removedTrees, nearestItem]);
-          } else if (itemType === 'canal') {
-            setRemovedCanals([...removedCanals, nearestItem]);
-          } else if (itemType === 'street') {
-            setRemovedStreets([...removedStreets, nearestItem]);
+      if (nearestItem && nearestItem.id) {
+        try {
+          if (nearestItem.isUserAdded) {
+            // Remove user-added item
+            if (Array.isArray(userBuildings)) {
+              setUserBuildings(userBuildings.filter(b => b && b.id !== nearestItem.id));
+            }
+          } else {
+            // Remove OSM item - ensure we have the correct item structure
+            const itemType = nearestItem.itemType;
+            if (itemType === 'building' && nearestItem.coordinate) {
+              if (Array.isArray(removedBuildings)) {
+                setRemovedBuildings([...removedBuildings, nearestItem]);
+              }
+            } else if (itemType === 'tree' && nearestItem.coordinate) {
+              // Ensure tree has the correct structure
+              const treeToRemove = {
+                id: nearestItem.id,
+                coordinate: nearestItem.coordinate,
+                name: nearestItem.name || null,
+                type: 'tree',
+              };
+              if (Array.isArray(removedTrees)) {
+                setRemovedTrees([...removedTrees, treeToRemove]);
+              }
+            } else if (itemType === 'canal' && nearestItem.coordinates) {
+              if (Array.isArray(removedCanals)) {
+                setRemovedCanals([...removedCanals, nearestItem]);
+              }
+            } else if (itemType === 'street' && nearestItem.coordinates) {
+              if (Array.isArray(removedStreets)) {
+                setRemovedStreets([...removedStreets, nearestItem]);
+              }
+            }
           }
+        } catch (error) {
+          console.error('Error removing item:', error);
+          Alert.alert('Error', 'Failed to remove item. Please try again.');
         }
       }
     }
   };
 
-  const handleMarkerPress = (building) => {
-    if (mode === 'remove') {
-      // Check if it's an existing building (not user-added)
-      if (!building.isUserAdded && !removedBuildings.some(rb => rb.id === building.id)) {
-        // Remove existing building
-        setRemovedBuildings([...removedBuildings, building]);
+  const handleMarkerPress = (item) => {
+    if (!item || !item.id) {
+      console.warn('Invalid item in handleMarkerPress');
+      return;
+    }
+
+    try {
+      if (mode === 'remove') {
+        // Check if it's a user-added item
+        if (item.isUserAdded) {
+          // Remove user-added item
+          if (Array.isArray(userBuildings)) {
+            setUserBuildings(userBuildings.filter(b => b && b.id !== item.id));
+          }
+        } else {
+          // Remove OSM item - determine type (with null checks)
+          const isTree = Array.isArray(existingTrees) && existingTrees.some(t => t && t.id === item.id);
+          const isBuilding = Array.isArray(existingBuildings) && existingBuildings.some(b => b && b.id === item.id);
+          const isCanal = Array.isArray(existingCanals) && existingCanals.some(c => c && c.id === item.id);
+          const isStreet = Array.isArray(existingStreets) && existingStreets.some(s => s && s.id === item.id);
+          
+          if (isTree && item.coordinate && Array.isArray(removedTrees) && !removedTrees.some(rt => rt && rt.id === item.id)) {
+            setRemovedTrees([...removedTrees, {
+              id: item.id,
+              coordinate: item.coordinate,
+              name: item.name || null,
+              type: 'tree',
+            }]);
+          } else if (isBuilding && Array.isArray(removedBuildings) && !removedBuildings.some(rb => rb && rb.id === item.id)) {
+            setRemovedBuildings([...removedBuildings, item]);
+          } else if (isCanal && Array.isArray(removedCanals) && !removedCanals.some(rc => rc && rc.id === item.id)) {
+            setRemovedCanals([...removedCanals, item]);
+          } else if (isStreet && Array.isArray(removedStreets) && !removedStreets.some(rs => rs && rs.id === item.id)) {
+            setRemovedStreets([...removedStreets, item]);
+          }
+        }
+      } else if (item.isUserAdded) {
+        // Remove user-added building/tree/canal/street (works in any mode)
+        if (Array.isArray(userBuildings)) {
+          setUserBuildings(userBuildings.filter(b => b && b.id !== item.id));
+        }
       }
-    } else if (building.isUserAdded) {
-      // Remove user-added building/tree (works in any mode)
-      setUserBuildings(userBuildings.filter(b => b.id !== building.id));
+    } catch (error) {
+      console.error('Error in handleMarkerPress:', error);
+      Alert.alert('Error', 'Failed to process marker. Please try again.');
     }
   };
 
@@ -367,9 +530,14 @@ export default function WeatherGameScreen() {
           <MapView
             ref={mapRef}
             style={styles.map}
-            initialRegion={{
+            initialRegion={location ? {
               latitude: location.latitude,
               longitude: location.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            } : {
+              latitude: 52.52,
+              longitude: 13.405,
               latitudeDelta: 0.01,
               longitudeDelta: 0.01,
             }}
@@ -379,14 +547,17 @@ export default function WeatherGameScreen() {
             showsMyLocationButton={false}
             onPress={handleMapPress}
             mapType="none"
+            onRegionChangeComplete={(region) => {
+              setCurrentMapRegion(region);
+            }}
           >
             {/* OpenStreetMap Tile Layer */}
             <OpenStreetMapTile />
             
             {/* Always show canals on the map */}
             {/* Existing canals from OSM (not removed) */}
-            {existingCanals
-              .filter(canal => !removedCanals.some(rc => rc.id === canal.id))
+            {Array.isArray(existingCanals) && Array.isArray(removedCanals) && existingCanals
+              .filter(canal => canal && canal.id && canal.coordinates && !removedCanals.some(rc => rc && rc.id === canal.id))
               .map((canal) => (
                 <Polyline
                   key={canal.id}
@@ -399,8 +570,8 @@ export default function WeatherGameScreen() {
               ))}
             
             {/* User-added canals */}
-            {userBuildings
-              .filter(b => b.type === 'canal')
+            {Array.isArray(userBuildings) && userBuildings
+              .filter(b => b && b.type === 'canal' && b.coordinates)
               .map((canal) => (
                 <Polyline
                   key={canal.id}
@@ -413,7 +584,9 @@ export default function WeatherGameScreen() {
               ))}
             
             {/* Removed canals (shown in red) */}
-            {removedCanals.map((canal) => (
+            {Array.isArray(removedCanals) && removedCanals
+              .filter(canal => canal && canal.coordinates)
+              .map((canal) => (
               <Polyline
                 key={`removed_${canal.id}`}
                 coordinates={canal.coordinates}
@@ -427,8 +600,8 @@ export default function WeatherGameScreen() {
             
             {/* Always show streets on the map */}
             {/* Existing streets from OSM (not removed) */}
-            {existingStreets
-              .filter(street => !removedStreets.some(rs => rs.id === street.id))
+            {Array.isArray(existingStreets) && Array.isArray(removedStreets) && existingStreets
+              .filter(street => street && street.id && street.coordinates && !removedStreets.some(rs => rs && rs.id === street.id))
               .map((street) => (
                 <Polyline
                   key={street.id}
@@ -441,8 +614,8 @@ export default function WeatherGameScreen() {
               ))}
             
             {/* User-added streets */}
-            {userBuildings
-              .filter(b => b.type === 'street')
+            {Array.isArray(userBuildings) && userBuildings
+              .filter(b => b && b.type === 'street' && b.coordinates)
               .map((street) => (
                 <Polyline
                   key={street.id}
@@ -455,7 +628,9 @@ export default function WeatherGameScreen() {
               ))}
             
             {/* Removed streets (shown in red) */}
-            {removedStreets.map((street) => (
+            {Array.isArray(removedStreets) && removedStreets
+              .filter(street => street && street.coordinates)
+              .map((street) => (
               <Polyline
                 key={`removed_${street.id}`}
                 coordinates={street.coordinates}
@@ -470,9 +645,30 @@ export default function WeatherGameScreen() {
             {/* Markers - Only shown when editing (showMarkers = true) */}
             {showMarkers && (
               <>
+                {/* Existing trees from OSM - Show with life token icons */}
+                {Array.isArray(existingTrees) && Array.isArray(removedTrees) && existingTrees
+                  .filter(tree => tree && tree.id && tree.coordinate && !removedTrees.some(rt => rt && rt.id === tree.id))
+                  .map((tree) => (
+                    <Marker
+                      key={tree.id}
+                      coordinate={tree.coordinate}
+                      title={tree.name || 'Tree'}
+                      description={mode === 'remove' ? 'Tap to remove' : 'Existing tree'}
+                      onPress={() => handleMarkerPress(tree)}
+                    >
+                      <View style={[styles.markerContainer, styles.treeMarker]}>
+                        <Image 
+                          source={require('../assets/life.png')} 
+                          style={styles.treeTokenIcon}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    </Marker>
+                  ))}
+
                 {/* Existing buildings from OSM - Markers */}
-                {existingBuildings
-                  .filter(building => !removedBuildings.some(rb => rb.id === building.id))
+                {Array.isArray(existingBuildings) && Array.isArray(removedBuildings) && existingBuildings
+                  .filter(building => building && building.id && building.coordinate && !removedBuildings.some(rb => rb && rb.id === building.id))
                   .map((building) => (
                     <Marker
                       key={building.id}
@@ -488,7 +684,9 @@ export default function WeatherGameScreen() {
                   ))}
                 
                 {/* Removed buildings - Markers */}
-                {removedBuildings.map((building) => (
+                {Array.isArray(removedBuildings) && removedBuildings
+                  .filter(building => building && building.coordinate)
+                  .map((building) => (
                   <Marker
                     key={`removed_${building.id}`}
                     coordinate={building.coordinate}
@@ -502,7 +700,9 @@ export default function WeatherGameScreen() {
                 ))}
                 
                 {/* User-added buildings and trees - Markers */}
-                {userBuildings.map((building) => (
+                {Array.isArray(userBuildings) && userBuildings
+                  .filter(building => building && building.id && (building.coordinate || building.coordinates))
+                  .map((building) => (
                   <Marker
                     key={building.id}
                     coordinate={building.coordinate}
@@ -540,7 +740,41 @@ export default function WeatherGameScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.controlButton, styles.keplerButton]}
-              onPress={() => setShowKepler(true)}
+              onPress={() => {
+                // Use current map region if available, otherwise use location
+                if (currentMapRegion) {
+                  setMapRegion(currentMapRegion);
+                } else if (mapRef.current) {
+                  // Try to get camera position
+                  mapRef.current.getCamera().then((camera) => {
+                    setMapRegion({
+                      latitude: camera.center.latitude,
+                      longitude: camera.center.longitude,
+                      latitudeDelta: camera.altitude / 111000 * 2,
+                      longitudeDelta: camera.altitude / 111000 * 2,
+                    });
+                  }).catch(() => {
+                    // Fallback: use current location
+                    if (location) {
+                      setMapRegion({
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                      });
+                    }
+                  });
+                } else if (location) {
+                  // Fallback: use current location
+                  setMapRegion({
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  });
+                }
+                setShowKepler(true);
+              }}
             >
               <Text style={styles.controlButtonText}>
                 🌐 3D View
@@ -641,14 +875,54 @@ export default function WeatherGameScreen() {
             <TouchableOpacity
               style={styles.controlButton}
               onPress={() => {
-                setUserBuildings([]);
-                setRemovedBuildings([]);
-                setRemovedTrees([]);
-                setRemovedCanals([]);
-                setRemovedStreets([]);
-                setMode('view');
-                setShowBuildMenu(false);
-                setShowMarkers(false);
+                try {
+                  // Reset all user modifications
+                  setUserBuildings([]);
+                  setRemovedBuildings([]);
+                  setRemovedTrees([]);
+                  setRemovedCanals([]);
+                  setRemovedStreets([]);
+                  
+                  // Reset UI state
+                  setMode('view');
+                  setShowBuildMenu(false);
+                  setShowMarkers(false);
+                  
+                  // Reset game state with safety checks
+                  try {
+                    if (location && location.latitude !== undefined && location.longitude !== undefined) {
+                      const passTimes = calculateSentinelPassTimes(location.latitude, location.longitude);
+                      if (passTimes && passTimes.timeUntilNextPass !== undefined) {
+                        setSatelliteTimeRemaining(passTimes.timeUntilNextPass);
+                      } else {
+                        setSatelliteTimeRemaining(SENTINEL_ORBIT_TIME);
+                      }
+                      if (passTimes && passTimes.timeSinceLastPass !== undefined) {
+                        setTimeSinceLastPass(passTimes.timeSinceLastPass);
+                      } else {
+                        setTimeSinceLastPass(0);
+                      }
+                    } else {
+                      setSatelliteTimeRemaining(SENTINEL_ORBIT_TIME);
+                      setTimeSinceLastPass(0);
+                    }
+                  } catch (error) {
+                    console.error('Error resetting satellite timer:', error);
+                    setSatelliteTimeRemaining(SENTINEL_ORBIT_TIME);
+                    setTimeSinceLastPass(0);
+                  }
+                  
+                  setGameIteration(0);
+                  setTokenCharges({
+                    life: 0,
+                    social: 50,
+                    water: 0,
+                    energy: 0,
+                  });
+                } catch (error) {
+                  console.error('Error in reset handler:', error);
+                  Alert.alert('Error', 'Failed to reset map. Please try again.');
+                }
               }}
             >
               <Text style={styles.controlButtonText}>🔄 Reset</Text>
@@ -699,6 +973,54 @@ export default function WeatherGameScreen() {
           </ScrollView>
         </View>
 
+        {/* Sentinel Pass Timer - Upper Left Corner (Compact) */}
+        <View style={styles.sentinelPassCompact}>
+          <Image 
+            source={require('../assets/satellite.png')} 
+            style={styles.sentinelIconCompact}
+            resizeMode="contain"
+          />
+          <View style={styles.sentinelInfoCompact}>
+            <Text style={styles.sentinelLabelCompact}>Sentinel</Text>
+            <Text style={styles.sentinelTimerCompact}>
+              {Math.floor(satelliteTimeRemaining / 60)}:{(satelliteTimeRemaining % 60).toString().padStart(2, '0')}
+            </Text>
+            <Text style={styles.sentinelTimeSinceCompact}>
+              {formatTimeSince(timeSinceLastPass)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Token Charge Bars - At bottom */}
+        <View style={styles.tokensPanel}>
+          <View style={styles.tokensContainer}>
+            <TokenBar 
+              icon={require('../assets/life.png')}
+              label="Life"
+              charge={tokenCharges.life}
+              color="#22c55e"
+            />
+            <TokenBar 
+              icon={require('../assets/social.png')}
+              label="Social"
+              charge={tokenCharges.social}
+              color="#3b82f6"
+            />
+            <TokenBar 
+              icon={require('../assets/water.png')}
+              label="Water"
+              charge={tokenCharges.water}
+              color="#06b6d4"
+            />
+            <TokenBar 
+              icon={require('../assets/energy.png')}
+              label="Energy"
+              charge={tokenCharges.energy}
+              color="#f59e0b"
+            />
+          </View>
+        </View>
+
         {/* Kepler.gl 3D Visualization Modal */}
         <KeplerGLView
           visible={showKepler}
@@ -713,6 +1035,8 @@ export default function WeatherGameScreen() {
           removedCanals={removedCanals}
           removedStreets={removedStreets}
           location={location}
+          weatherData={currentWeather}
+          mapRegion={mapRegion}
         />
       </LinearGradient>
     </View>
@@ -748,6 +1072,26 @@ function StatCard({ icon, label, value, change, baseValue }) {
       ) : (
         <Text style={styles.noChange}>No change</Text>
       )}
+    </View>
+  );
+}
+
+function TokenBar({ icon, label, charge, color }) {
+  return (
+    <View style={styles.tokenBar}>
+      <Image source={icon} style={styles.tokenIcon} resizeMode="contain" />
+      <View style={styles.tokenInfo}>
+        <Text style={styles.tokenLabel}>{label}</Text>
+        <View style={styles.tokenChargeContainer}>
+          <View 
+            style={[
+              styles.tokenChargeBar, 
+              { width: `${charge}%`, backgroundColor: color }
+            ]} 
+          />
+        </View>
+        <Text style={styles.tokenChargeText}>{charge}%</Text>
+      </View>
     </View>
   );
 }
@@ -891,6 +1235,108 @@ const styles = StyleSheet.create({
   },
   markerIcon: {
     fontSize: 24,
+  },
+  treeMarker: {
+    backgroundColor: 'rgba(34, 197, 94, 0.9)',
+    borderWidth: 1,
+    borderColor: '#FFF',
+    padding: 2,
+  },
+  treeTokenIcon: {
+    width: 20,
+    height: 20,
+  },
+  sentinelPassCompact: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 40,
+    left: theme.spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    ...theme.shadows.md,
+    zIndex: 10,
+    minWidth: 120,
+  },
+  sentinelIconCompact: {
+    width: 24,
+    height: 24,
+    marginRight: theme.spacing.xs,
+  },
+  sentinelInfoCompact: {
+    flex: 1,
+  },
+  sentinelLabelCompact: {
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+    marginBottom: 1,
+    fontWeight: '600',
+  },
+  sentinelTimerCompact: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.text,
+    marginBottom: 1,
+  },
+  sentinelTimeSinceCompact: {
+    fontSize: 8,
+    color: theme.colors.textSecondary,
+    opacity: 0.7,
+  },
+  tokensPanel: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 200 : 190,
+    left: theme.spacing.md,
+    right: theme.spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
+    ...theme.shadows.lg,
+    zIndex: 10,
+  },
+  tokensContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: theme.spacing.sm,
+  },
+  tokenBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.sm,
+  },
+  tokenIcon: {
+    width: 24,
+    height: 24,
+    marginRight: theme.spacing.xs,
+  },
+  tokenInfo: {
+    flex: 1,
+  },
+  tokenLabel: {
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  tokenChargeContainer: {
+    height: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  tokenChargeBar: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  tokenChargeText: {
+    fontSize: 9,
+    color: theme.colors.text,
+    fontWeight: '600',
   },
   statsPanel: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
