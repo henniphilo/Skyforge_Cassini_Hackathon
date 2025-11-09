@@ -18,7 +18,7 @@ export default function App() {
   return (
     <>
       <StatusBar style="light" />
-      <WeatherGameScreen />
+      <WeatherGameScreen onBackToLanding={() => setShowLanding(true)} />
     </>
   );
 }

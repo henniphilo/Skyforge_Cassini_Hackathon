@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Alert, Dimensions, ScrollView, Image, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, Polygon, Circle, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -12,7 +12,17 @@ import KeplerGLView from '../components/KeplerGLView';
 
 const { width, height } = Dimensions.get('window');
 
-export default function WeatherGameScreen() {
+// Pre-load icons at module level for better performance
+const LIFE_ICON = require('../assets/life.png');
+const SOCIAL_ICON = require('../assets/social.png');
+const ENERGY_ICON = require('../assets/energy.png');
+const FIRE_ICON = require('../assets/fire.png');
+const WIND_ICON = require('../assets/wind.png');
+const WATER_ICON = require('../assets/water.png');
+const EARTH_ICON = require('../assets/earth.png');
+const SATELLITE_ICON = require('../assets/satellite.png');
+
+export default function WeatherGameScreen({ onBackToLanding }) {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useState(null);
   const [baseWeather, setBaseWeather] = useState(null);
@@ -32,6 +42,9 @@ export default function WeatherGameScreen() {
   const [showBuildMenu, setShowBuildMenu] = useState(false); // Toggle build dropdown menu
   const [mapRegion, setMapRegion] = useState(null); // Current map region for 3D view
   const [currentMapRegion, setCurrentMapRegion] = useState(null); // Track current map region
+  const [infoModalVisible, setInfoModalVisible] = useState(false); // Info modal visibility
+  const [selectedStat, setSelectedStat] = useState(null); // Selected stat for info modal
+  const [rankModalVisible, setRankModalVisible] = useState(false); // Rank modal visibility
   const mapRef = useRef(null);
   
   // Game mechanics state
@@ -40,10 +53,23 @@ export default function WeatherGameScreen() {
   const [timeSinceLastPass, setTimeSinceLastPass] = useState(0); // Time since last Sentinel pass
   const [gameIteration, setGameIteration] = useState(0); // Current game iteration
   const [tokenCharges, setTokenCharges] = useState({
-    life: 0,      // Trees planted
-    social: 50,   // Buildings added/removed (starts at 50 for balance)
-    energy: 0,    // Streets built
+    life: 13,     // Trees planted (mockup: 22% of 60 = 13.2 ≈ 13)
+    social: 39,   // Buildings added/removed (mockup: 55% of 70 = 38.5 ≈ 39)
+    energy: 6,    // Streets built (mockup: 12% of 50 = 6)
   });
+
+  // Rank requirements for calculating percentages
+  const kiezGuardianRequirements = {
+    life: 60,
+    social: 70,
+    energy: 50,
+  };
+
+  // Calculate percentage for token charges
+  const getTokenPercentage = (tokenType, currentValue) => {
+    const required = kiezGuardianRequirements[tokenType];
+    return Math.min(100, Math.round((currentValue / required) * 100));
+  };
 
   useEffect(() => {
     initializeLocation();
@@ -71,6 +97,8 @@ export default function WeatherGameScreen() {
         if (prev <= 1) {
           // Sentinel completed orbit - advance game iteration
           setGameIteration((prevIter) => prevIter + 1);
+          // Evaluate rank at end of iteration
+          evaluateRank();
           // Recalculate pass times
           if (location) {
             const passTimes = calculateSentinelPassTimes(location.latitude, location.longitude);
@@ -87,7 +115,7 @@ export default function WeatherGameScreen() {
     }, 1000); // Update every second
 
     return () => clearInterval(timer);
-  }, [location]);
+  }, [location, tokenCharges]);
 
   // Update token charges based on actions
   useEffect(() => {
@@ -465,12 +493,8 @@ export default function WeatherGameScreen() {
   };
 
   const getGradientColors = () => {
-    if (!currentWeather) return ['#87CEEB', '#4A90E2'];
-    const humidity = currentWeather.humidity;
-    if (humidity > 80) return ['#4A5568', '#2D3748'];
-    if (humidity > 60) return ['#A0AEC0', '#718096'];
-    if (humidity > 40) return ['#7BB5F0', '#4A90E2'];
-    return ['#FDB813', '#F59E0B'];
+    // Match landing page color scheme: dark blue to dark purple gradient
+    return ['#1a1a2e', '#16213e', '#0f3460', '#533483'];
   };
 
   const getWeatherImpact = () => {
@@ -481,6 +505,25 @@ export default function WeatherGameScreen() {
       humidity: (currentWeather.humidity - baseWeather.humidity).toFixed(1),
       co2: (currentWeather.co2 - baseWeather.co2).toFixed(1),
     };
+  };
+
+  // Evaluate rank at end of sentinel iteration
+  const evaluateRank = () => {
+    // Rank requirements
+    // Check if player meets requirements for Kiez Guardian
+    const meetsRequirements = 
+      tokenCharges.life >= kiezGuardianRequirements.life &&
+      tokenCharges.social >= kiezGuardianRequirements.social &&
+      tokenCharges.energy >= kiezGuardianRequirements.energy;
+
+    if (meetsRequirements) {
+      // Player has leveled up to Kiez Guardian
+      Alert.alert(
+        '🎉 Level Up!',
+        'Congratulations! You have achieved the rank: Kiez Guardian',
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   // Generate building polygon coordinates (square building)
@@ -504,7 +547,7 @@ export default function WeatherGameScreen() {
   if (loading || !location || !currentWeather) {
     return (
       <View style={styles.container}>
-        <LinearGradient colors={['#87CEEB', '#4A90E2']} style={styles.gradient}>
+        <LinearGradient colors={['#1a1a2e', '#16213e', '#0f3460', '#533483']} style={styles.gradient}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#FFF" />
             <Text style={styles.loadingText}>Loading 3D map and weather data...</Text>
@@ -652,7 +695,7 @@ export default function WeatherGameScreen() {
                     >
                       <View style={[styles.markerContainer, styles.treeMarker]}>
                         <Image 
-                          source={require('../assets/life.png')} 
+                          source={LIFE_ICON} 
                           style={styles.treeTokenIcon}
                           resizeMode="contain"
                         />
@@ -908,9 +951,9 @@ export default function WeatherGameScreen() {
                   
                   setGameIteration(0);
                 setTokenCharges({
-                  life: 0,
-                  social: 50,
-                  energy: 0,
+                  life: 13,     // Trees planted (mockup: 22% of 60 = 13.2 ≈ 13)
+                  social: 39,   // Buildings added/removed (mockup: 55% of 70 = 38.5 ≈ 39)
+                  energy: 6,    // Streets built (mockup: 12% of 50 = 6)
                 });
                 } catch (error) {
                   console.error('Error in reset handler:', error);
@@ -932,32 +975,48 @@ export default function WeatherGameScreen() {
             style={styles.weatherScrollView}
           >
             <StatCard
-              iconSource={require('../assets/fire.png')}
+              iconSource={FIRE_ICON}
               label="Temperature"
               value={`${currentWeather.temperature.toFixed(1)}°C`}
               change={impact?.temp}
               baseValue={baseWeather?.temperature}
+              onPress={() => {
+                setSelectedStat('temperature');
+                setInfoModalVisible(true);
+              }}
             />
             <StatCard
-              iconSource={require('../assets/wind.png')}
+              iconSource={WIND_ICON}
               label="Wind Speed"
               value={`${currentWeather.windSpeed.toFixed(1)} km/h`}
               change={impact?.wind}
               baseValue={baseWeather?.windSpeed}
+              onPress={() => {
+                setSelectedStat('wind');
+                setInfoModalVisible(true);
+              }}
             />
             <StatCard
-              iconSource={require('../assets/water.png')}
+              iconSource={WATER_ICON}
               label="Humidity"
               value={`${currentWeather.humidity.toFixed(1)}%`}
               change={impact?.humidity}
               baseValue={baseWeather?.humidity}
+              onPress={() => {
+                setSelectedStat('humidity');
+                setInfoModalVisible(true);
+              }}
             />
             <StatCard
-              iconSource={require('../assets/earth.png')}
+              iconSource={EARTH_ICON}
               label="CO₂"
               value={`${currentWeather.co2.toFixed(1)} ppm`}
               change={impact?.co2}
               baseValue={baseWeather?.co2}
+              onPress={() => {
+                setSelectedStat('co2');
+                setInfoModalVisible(true);
+              }}
             />
           </ScrollView>
         </View>
@@ -965,7 +1024,7 @@ export default function WeatherGameScreen() {
         {/* Sentinel Pass Timer - Upper Left Corner (Compact) */}
         <View style={styles.sentinelPassCompact}>
           <Image 
-            source={require('../assets/satellite.png')} 
+            source={SATELLITE_ICON} 
             style={styles.sentinelIconCompact}
             resizeMode="contain"
           />
@@ -980,29 +1039,47 @@ export default function WeatherGameScreen() {
           </View>
         </View>
 
+        {/* Target Button - Under Sentinel */}
+        <TouchableOpacity
+          style={styles.targetButton}
+          onPress={() => setRankModalVisible(true)}
+        >
+          <Text style={styles.targetButtonText}>Target: Kiez Guardian</Text>
+        </TouchableOpacity>
+
         {/* Token Charge Bars - At bottom */}
         <View style={styles.tokensPanel}>
           <View style={styles.tokensContainer}>
             <TokenBar 
-              icon={require('../assets/life.png')}
+              icon={LIFE_ICON}
               label="Life"
-              charge={tokenCharges.life}
+              charge={getTokenPercentage('life', tokenCharges.life)}
               color="#22c55e"
             />
             <TokenBar 
-              icon={require('../assets/social.png')}
+              icon={SOCIAL_ICON}
               label="Social"
-              charge={tokenCharges.social}
+              charge={getTokenPercentage('social', tokenCharges.social)}
               color="#3b82f6"
             />
             <TokenBar 
-              icon={require('../assets/energy.png')}
+              icon={ENERGY_ICON}
               label="Energy"
-              charge={tokenCharges.energy}
+              charge={getTokenPercentage('energy', tokenCharges.energy)}
               color="#f59e0b"
             />
           </View>
         </View>
+
+        {/* Back to Landing Button - Lower Left Corner */}
+        {onBackToLanding && (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={onBackToLanding}
+          >
+            <Text style={styles.backButtonText}>← Back</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Kepler.gl 3D Visualization Modal */}
         <KeplerGLView
@@ -1021,19 +1098,41 @@ export default function WeatherGameScreen() {
           weatherData={currentWeather}
           mapRegion={mapRegion}
         />
+
+        {/* Environmental Info Modal */}
+        <InfoModal
+          visible={infoModalVisible}
+          statType={selectedStat}
+          onClose={() => {
+            setInfoModalVisible(false);
+            setSelectedStat(null);
+          }}
+          change={impact}
+        />
+
+        {/* Rank Modal */}
+        <RankModal
+          visible={rankModalVisible}
+          tokenCharges={tokenCharges}
+          onClose={() => setRankModalVisible(false)}
+        />
       </LinearGradient>
     </View>
   );
 }
 
-function StatCard({ iconSource, label, value, change, baseValue }) {
+function StatCard({ iconSource, label, value, change, baseValue, onPress }) {
   const changeValue = parseFloat(change || 0);
   const isPositive = changeValue > 0;
   const isNegative = changeValue < 0;
   const hasChange = changeValue !== 0;
 
   return (
-    <View style={styles.statCard}>
+    <TouchableOpacity 
+      style={styles.statCard}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       {iconSource ? (
         <Image 
           source={iconSource} 
@@ -1061,7 +1160,8 @@ function StatCard({ iconSource, label, value, change, baseValue }) {
       ) : (
         <Text style={styles.noChange}>No change</Text>
       )}
-    </View>
+      <Text style={styles.infoHint}>Tap for info</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -1082,6 +1182,340 @@ function TokenBar({ icon, label, charge, color }) {
         <Text style={styles.tokenChargeText}>{charge}%</Text>
       </View>
     </View>
+  );
+}
+
+function RankModal({ visible, tokenCharges, onClose }) {
+  // Rank requirements for Kiez Guardian
+  const kiezGuardianRequirements = {
+    life: 60,
+    social: 70,
+    energy: 50,
+  };
+
+  // Current rank is always Good Neighbor (until they level up)
+  const currentRank = 'Good Neighbor';
+  const targetRank = 'Kiez Guardian';
+
+  // Calculate percentage to level up for each charge
+  const getLevelUpPercentage = (tokenType, required) => {
+    const current = tokenCharges[tokenType];
+    return Math.min(100, Math.round((current / required) * 100));
+  };
+
+  // Use mockup percentages for display
+  const lifePercentage = 22;
+  const socialPercentage = 55;
+  const energyPercentage = 12;
+
+  // Use pre-loaded icons from module level
+  const lifeIcon = LIFE_ICON;
+  const socialIcon = SOCIAL_ICON;
+  const energyIcon = ENERGY_ICON;
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <LinearGradient
+            colors={['#1a1a2e', '#16213e', '#0f3460', '#533483']}
+            style={styles.modalGradient}
+          >
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Game Target</Text>
+              <TouchableOpacity 
+                style={styles.modalCloseButton}
+                onPress={onClose}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Rank */}
+            <View style={styles.rankSection}>
+              <Text style={styles.rankSectionTitle}>You are:</Text>
+              <View style={styles.currentRankCard}>
+                <Text style={styles.currentRankName}>{currentRank}</Text>
+              </View>
+            </View>
+
+            {/* Target Rank */}
+            <View style={styles.rankSection}>
+              <Text style={styles.rankSectionTitle}>Become:</Text>
+              <View style={styles.targetRankCard}>
+                <Text style={styles.targetRankName}>{targetRank}</Text>
+              </View>
+            </View>
+
+            {/* Charge Up Goals */}
+            <View style={styles.rankSection}>
+              <View style={styles.chargeUpIconsContainer}>
+                {/* Life Icon */}
+                <View style={styles.chargeUpIconItem}>
+                  <Image 
+                    source={lifeIcon} 
+                    style={styles.chargeUpIconLarge}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.chargeUpGoalText}>Aiming for</Text>
+                  <Text style={styles.chargeUpIconPercentage}>{lifePercentage}%</Text>
+                </View>
+
+                {/* Social Icon */}
+                <View style={styles.chargeUpIconItem}>
+                  <Image 
+                    source={socialIcon} 
+                    style={styles.chargeUpIconLarge}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.chargeUpGoalText}>Aiming for</Text>
+                  <Text style={styles.chargeUpIconPercentage}>{socialPercentage}%</Text>
+                </View>
+
+                {/* Energy Icon */}
+                <View style={styles.chargeUpIconItem}>
+                  <Image 
+                    source={energyIcon} 
+                    style={styles.chargeUpIconLarge}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.chargeUpGoalText}>Aiming for</Text>
+                  <Text style={styles.chargeUpIconPercentage}>{energyPercentage}%</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Close Button */}
+            <TouchableOpacity 
+              style={styles.modalButton}
+              onPress={onClose}
+            >
+              <Text style={styles.modalButtonText}>Close</Text>
+            </TouchableOpacity>
+          </LinearGradient>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function InfoModal({ visible, statType, onClose, change }) {
+  const getStatInfo = () => {
+    if (!statType) return null;
+    
+    let changeKey = '';
+    if (statType === 'temperature') changeKey = 'temp';
+    else if (statType === 'wind') changeKey = 'wind';
+    else if (statType === 'humidity') changeKey = 'humidity';
+    else if (statType === 'co2') changeKey = 'co2';
+    
+    const changeValue = change && change[changeKey] ? parseFloat(change[changeKey]) : 0;
+    const isPositive = changeValue > 0;
+    const isNegative = changeValue < 0;
+
+    switch (statType) {
+      case 'temperature':
+        return {
+          title: 'Temperature Impact',
+          icon: FIRE_ICON,
+          description: 'Urban development significantly affects local temperature through the Urban Heat Island (UHI) effect.',
+          impacts: [
+            {
+              action: '🏢 Buildings Added',
+              effect: 'Increases temperature',
+              explanation: 'Concrete and asphalt absorb and retain heat, creating "heat islands" that can be 1-3°C warmer than surrounding rural areas. Buildings block cooling winds and reduce natural ventilation.',
+            },
+            {
+              action: '🌳 Trees Planted',
+              effect: 'Decreases temperature',
+              explanation: 'Trees provide shade and release water vapor through transpiration, cooling the air. Urban forests can reduce temperatures by 2-8°C in their immediate vicinity.',
+            },
+            {
+              action: '🛣️ Streets Built',
+              effect: 'Increases temperature',
+              explanation: 'Asphalt roads absorb up to 95% of solar radiation, heating up during the day and releasing heat at night, contributing to elevated nighttime temperatures.',
+            },
+          ],
+          changeValue,
+          isPositive,
+          isNegative,
+        };
+      case 'wind':
+        return {
+          title: 'Wind Speed Impact',
+          icon: WIND_ICON,
+          description: 'Urban structures alter wind patterns by creating obstacles and channeling airflow.',
+          impacts: [
+            {
+              action: '🏢 Buildings Added',
+              effect: 'Decreases wind speed',
+              explanation: 'Buildings act as barriers, disrupting wind flow and creating turbulence. Tall structures can reduce wind speeds by 20-40% in their immediate area, affecting natural ventilation.',
+            },
+            {
+              action: '🌳 Trees Planted',
+              effect: 'Decreases wind speed',
+              explanation: 'Trees create drag and slow down wind currents. While this reduces wind speed, it also helps protect areas from strong gusts and creates more stable microclimates.',
+            },
+            {
+              action: '🛣️ Streets Built',
+              effect: 'Can channel or block wind',
+              explanation: 'Street canyons (narrow streets between tall buildings) can either channel wind, increasing speed, or create wind shadows that reduce airflow, depending on orientation.',
+            },
+          ],
+          changeValue,
+          isPositive,
+          isNegative,
+        };
+      case 'humidity':
+        return {
+          title: 'Humidity Impact',
+          icon: WATER_ICON,
+          description: 'Human modifications to the landscape directly affect local moisture levels and atmospheric humidity.',
+          impacts: [
+            {
+              action: '🏢 Buildings Added',
+              effect: 'Decreases humidity',
+              explanation: 'Impervious surfaces like concrete and asphalt prevent water from infiltrating the ground. This reduces evaporation and transpiration, leading to lower humidity levels in urban areas.',
+            },
+            {
+              action: '🌳 Trees Planted',
+              effect: 'Increases humidity',
+              explanation: 'Trees release large amounts of water vapor through transpiration. A single mature tree can release hundreds of liters of water daily, significantly increasing local humidity and improving air quality.',
+            },
+            {
+              action: '🚣 Canals Built',
+              effect: 'Increases humidity',
+              explanation: 'Water bodies increase evaporation rates, adding moisture to the air. Canals and waterways can raise local humidity by 5-15%, creating more comfortable microclimates.',
+            },
+          ],
+          changeValue,
+          isPositive,
+          isNegative,
+        };
+      case 'co2':
+        return {
+          title: 'CO₂ Concentration Impact',
+          icon: EARTH_ICON,
+          description: 'Carbon dioxide levels are directly influenced by human activities and natural processes in urban environments.',
+          impacts: [
+            {
+              action: '🏢 Buildings Added',
+              effect: 'Increases CO₂',
+              explanation: 'Buildings contribute to CO₂ through construction materials (cement production), energy consumption for heating/cooling, and reduced carbon sinks. Urban areas typically have 10-20% higher CO₂ concentrations.',
+            },
+            {
+              action: '🌳 Trees Planted',
+              effect: 'Decreases CO₂',
+              explanation: 'Trees absorb CO₂ through photosynthesis, storing carbon in their biomass. A single mature tree can sequester 20-50 kg of CO₂ annually, making urban forests crucial for carbon capture.',
+            },
+            {
+              action: '🛣️ Streets Built',
+              effect: 'Increases CO₂',
+              explanation: 'Roads increase vehicle traffic and associated emissions. Asphalt production also releases CO₂. More streets typically mean more transportation-related carbon emissions.',
+            },
+          ],
+          changeValue,
+          isPositive,
+          isNegative,
+        };
+      default:
+        return null;
+    }
+  };
+
+  const info = getStatInfo();
+  if (!info || !visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <LinearGradient
+            colors={['#1a1a2e', '#16213e', '#0f3460', '#533483']}
+            style={styles.modalGradient}
+          >
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <Image 
+                source={info.icon} 
+                style={styles.modalIcon}
+                resizeMode="contain"
+              />
+              <Text style={styles.modalTitle}>{info.title}</Text>
+              <TouchableOpacity 
+                style={styles.modalCloseButton}
+                onPress={onClose}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView 
+              style={styles.modalScrollView}
+              showsVerticalScrollIndicator={true}
+            >
+              {/* Description */}
+              <Text style={styles.modalDescription}>{info.description}</Text>
+
+              {/* Current Change Indicator */}
+              {(info.isPositive || info.isNegative) && (
+                <View style={styles.changeIndicator}>
+                  <Text style={styles.changeIndicatorLabel}>Current Change:</Text>
+                  <Text style={[
+                    styles.changeIndicatorValue,
+                    info.isPositive && styles.changeIndicatorPositive,
+                    info.isNegative && styles.changeIndicatorNegative,
+                  ]}>
+                    {info.isPositive ? '↑' : '↓'} {Math.abs(info.changeValue).toFixed(1)}
+                  </Text>
+                </View>
+              )}
+
+              {/* Impact List */}
+              <View style={styles.impactsContainer}>
+                <Text style={styles.impactsTitle}>How Your Actions Affect {info.title.split(' ')[0]}:</Text>
+                {info.impacts.map((impact, index) => (
+                  <View key={index} style={styles.impactItem}>
+                    <View style={styles.impactHeader}>
+                      <Text style={styles.impactAction}>{impact.action}</Text>
+                      <Text style={[
+                        styles.impactEffect,
+                        impact.effect.includes('Increases') && styles.impactEffectPositive,
+                        impact.effect.includes('Decreases') && styles.impactEffectNegative,
+                      ]}>
+                        {impact.effect}
+                      </Text>
+                    </View>
+                    <Text style={styles.impactExplanation}>{impact.explanation}</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            {/* Close Button */}
+            <TouchableOpacity 
+              style={styles.modalButton}
+              onPress={onClose}
+            >
+              <Text style={styles.modalButtonText}>Close</Text>
+            </TouchableOpacity>
+          </LinearGradient>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1136,16 +1570,16 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   showMarkersButton: {
-    backgroundColor: 'rgba(59, 130, 246, 0.9)', // Blue for markers
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
   },
   keplerButton: {
-    backgroundColor: 'rgba(139, 92, 246, 0.9)', // Purple for 3D view
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
   },
   buildButton: {
-    backgroundColor: 'rgba(16, 185, 129, 0.9)', // Green for build
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
   },
   removeButton: {
-    backgroundColor: 'rgba(239, 68, 68, 0.9)', // Red for remove
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
   },
   buildButtonContainer: {
     position: 'relative',
@@ -1155,47 +1589,52 @@ const styles = StyleSheet.create({
     top: '100%',
     right: 0,
     marginTop: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.98)',
+    backgroundColor: 'rgba(26, 26, 46, 0.95)', // Dark blue matching landing page
     borderRadius: theme.borderRadius.md,
     minWidth: 140,
     ...theme.shadows.lg,
     zIndex: 1000,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
   },
   buildMenuItem: {
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.05)',
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   buildMenuItemLast: {
     borderBottomWidth: 0,
   },
   buildMenuItemActive: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: 'rgba(83, 52, 131, 0.7)', // Purple matching landing page
   },
   buildMenuText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#000',
+    color: '#FFF',
   },
   buildMenuTextActive: {
     color: '#FFF',
   },
   controlButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.md,
     ...theme.shadows.md,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
   },
   controlButtonActive: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: 'rgba(83, 52, 131, 0.9)', // Purple matching landing page
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   controlButtonText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#000',
+    color: '#FFF',
   },
   controlButtonTextActive: {
     color: '#FFF',
@@ -1239,7 +1678,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: Platform.OS === 'ios' ? 50 : 40,
     left: theme.spacing.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.sm,
     flexDirection: 'row',
@@ -1247,6 +1686,45 @@ const styles = StyleSheet.create({
     ...theme.shadows.md,
     zIndex: 10,
     minWidth: 120,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
+  },
+  targetButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 110 : 100, // Directly under Sentinel bar
+    left: theme.spacing.md,
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    ...theme.shadows.md,
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
+    maxWidth: 120, // Align with Sentinel bar width
+  },
+  targetButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  backButton: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 50 : 40,
+    left: theme.spacing.md,
+    backgroundColor: 'rgba(26, 26, 46, 0.9)', // Dark blue matching landing page
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    ...theme.shadows.md,
+    zIndex: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
+  },
+  backButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFF',
   },
   sentinelIconCompact: {
     width: 24,
@@ -1258,19 +1736,19 @@ const styles = StyleSheet.create({
   },
   sentinelLabelCompact: {
     fontSize: 9,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 1,
     fontWeight: '600',
   },
   sentinelTimerCompact: {
     fontSize: 12,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: '#FFF',
     marginBottom: 1,
   },
   sentinelTimeSinceCompact: {
     fontSize: 8,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.7)',
     opacity: 0.7,
   },
   tokensPanel: {
@@ -1278,11 +1756,13 @@ const styles = StyleSheet.create({
     bottom: Platform.OS === 'ios' ? 200 : 190,
     left: theme.spacing.md,
     right: theme.spacing.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(26, 26, 46, 0.95)', // Dark blue matching landing page
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing.md,
     ...theme.shadows.lg,
     zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
   },
   tokensContainer: {
     flexDirection: 'row',
@@ -1307,7 +1787,7 @@ const styles = StyleSheet.create({
   },
   tokenLabel: {
     fontSize: 9,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 4,
     fontWeight: '600',
   },
@@ -1324,16 +1804,20 @@ const styles = StyleSheet.create({
   },
   tokenChargeText: {
     fontSize: 9,
-    color: theme.colors.text,
+    color: '#FFF',
     fontWeight: '600',
   },
   statsPanel: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(26, 26, 46, 0.95)', // Dark blue matching landing page
     borderTopLeftRadius: theme.borderRadius.xl,
     borderTopRightRadius: theme.borderRadius.xl,
     padding: theme.spacing.md,
     paddingBottom: Platform.OS === 'ios' ? 50 : 40,
     maxHeight: height * 0.25,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.5)', // Purple accent
   },
   statsHeader: {
     marginBottom: theme.spacing.sm,
@@ -1352,7 +1836,7 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xs,
   },
   statCard: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: 'rgba(22, 33, 62, 0.8)', // Darker blue matching landing page
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
     width: 140,
@@ -1361,6 +1845,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...theme.shadows.sm,
     minHeight: 120,
+    borderWidth: 1,
+    borderColor: 'rgba(83, 52, 131, 0.3)', // Purple accent
   },
   statIcon: {
     fontSize: 24,
@@ -1373,14 +1859,14 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 10,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 2,
     textAlign: 'center',
   },
   statValue: {
     fontSize: 16,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: '#FFF',
     marginBottom: 2,
   },
   changeContainer: {
@@ -1400,13 +1886,324 @@ const styles = StyleSheet.create({
   },
   baseValue: {
     fontSize: 9,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.6)',
     opacity: 0.7,
   },
   noChange: {
     fontSize: 10,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.6)',
     fontStyle: 'italic',
     marginTop: 4,
+  },
+  infoHint: {
+    fontSize: 8,
+    color: 'rgba(83, 52, 131, 1)', // Purple accent
+    marginTop: 4,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  // Info Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: theme.spacing.lg,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '85%',
+    borderRadius: theme.borderRadius.xl,
+    overflow: 'hidden',
+    ...theme.shadows.xl,
+  },
+  modalGradient: {
+    padding: theme.spacing.lg,
+    minHeight: 300,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+    paddingBottom: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  modalIcon: {
+    width: 32,
+    height: 32,
+    marginRight: theme.spacing.sm,
+    tintColor: '#FFF',
+  },
+  modalTitle: {
+    flex: 1,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseText: {
+    fontSize: 18,
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  modalScrollView: {
+    flex: 1,
+    marginBottom: theme.spacing.md,
+    minHeight: 200,
+  },
+  modalDescription: {
+    fontSize: 14,
+    color: '#FFF',
+    lineHeight: 20,
+    marginBottom: theme.spacing.md,
+    opacity: 0.9,
+  },
+  changeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    padding: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+  },
+  changeIndicatorLabel: {
+    fontSize: 12,
+    color: '#FFF',
+    marginRight: theme.spacing.sm,
+    opacity: 0.8,
+  },
+  changeIndicatorValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  changeIndicatorPositive: {
+    color: '#ef4444',
+  },
+  changeIndicatorNegative: {
+    color: '#22c55e',
+  },
+  impactsContainer: {
+    marginTop: theme.spacing.sm,
+  },
+  impactsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
+    marginBottom: theme.spacing.md,
+  },
+  impactItem: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  impactHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: theme.spacing.xs,
+  },
+  impactAction: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+    flex: 1,
+  },
+  impactEffect: {
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.sm,
+  },
+  impactEffectPositive: {
+    color: '#ef4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  impactEffectNegative: {
+    color: '#22c55e',
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
+  },
+  impactExplanation: {
+    fontSize: 12,
+    color: '#FFF',
+    lineHeight: 18,
+    opacity: 0.85,
+    marginTop: theme.spacing.xs,
+  },
+  modalButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.borderRadius.md,
+    alignItems: 'center',
+    marginTop: theme.spacing.sm,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  // Rank Modal Styles
+  rankSection: {
+    marginBottom: theme.spacing.lg,
+  },
+  rankSectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFF',
+    marginBottom: theme.spacing.sm,
+  },
+  currentRankCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  currentRankName: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFF',
+    textAlign: 'center',
+  },
+  targetRankCard: {
+    backgroundColor: 'rgba(83, 52, 131, 0.3)', // Purple tint for target
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  targetRankName: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFF',
+    textAlign: 'center',
+  },
+  chargeUpGoalsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: theme.spacing.md,
+    textAlign: 'center',
+  },
+  currentRankLevel: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: theme.spacing.xs,
+  },
+  currentRankDescription: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.7)',
+    lineHeight: 18,
+  },
+  nextRankDescription: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: theme.spacing.md,
+    lineHeight: 18,
+  },
+  requirementsContainer: {
+    marginTop: theme.spacing.sm,
+  },
+  requirementsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: theme.spacing.md,
+  },
+  requirementItem: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  requirementHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.xs,
+  },
+  requirementIcon: {
+    width: 20,
+    height: 20,
+    marginRight: theme.spacing.xs,
+    tintColor: '#FFF',
+  },
+  requirementLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  requirementValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: theme.spacing.xs,
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  requirementNeeded: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontStyle: 'italic',
+  },
+  maxRankContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.lg,
+    alignItems: 'center',
+    marginTop: theme.spacing.md,
+  },
+  maxRankText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
+    textAlign: 'center',
+  },
+  chargeUpIconsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginTop: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+  },
+  chargeUpIconItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  chargeUpIconLarge: {
+    width: 56,
+    height: 56,
+    marginBottom: theme.spacing.xs,
+  },
+  chargeUpGoalText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.7)',
+    marginBottom: theme.spacing.xs,
+    textAlign: 'center',
+  },
+  chargeUpIconPercentage: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFF',
+    textAlign: 'center',
   },
 });

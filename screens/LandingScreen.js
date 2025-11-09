@@ -55,6 +55,7 @@ export default function LandingScreen({ onEnter }) {
 
   const fetchWeatherData = async (latitude, longitude) => {
     try {
+      setLoading(true);
       const weatherData = await getCopernicusWeatherData(latitude, longitude);
       
       // Get location name (simplified - in production, use reverse geocoding)
@@ -74,12 +75,61 @@ export default function LandingScreen({ onEnter }) {
       });
     } catch (error) {
       console.error('Error fetching weather data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const getLocationName = async (latitude, longitude) => {
-    // Simplified - in production, use a geocoding service
-    return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
+    try {
+      // Use Nominatim (OpenStreetMap) reverse geocoding API with English language
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10&addressdetails=1&accept-language=en`,
+        {
+          headers: {
+            'User-Agent': 'Skyforge Weather App', // Required by Nominatim
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Geocoding failed');
+      }
+      
+      const data = await response.json();
+      
+      // Extract location name from response
+      if (data.address) {
+        // Try to get city/town name first
+        const city = data.address.city || 
+                     data.address.town || 
+                     data.address.village || 
+                     data.address.municipality ||
+                     data.address.county;
+        
+        // Get country (should be in English now)
+        const country = data.address.country;
+        
+        if (city && country) {
+          return `${city}, ${country}`;
+        } else if (city) {
+          return city;
+        } else if (country) {
+          return country;
+        } else if (data.display_name) {
+          // Fallback to full display name, but shorten it
+          const parts = data.display_name.split(',');
+          return parts.slice(0, 2).join(', ').trim();
+        }
+      }
+      
+      // Fallback to coordinates if geocoding fails
+      return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
+    } catch (error) {
+      console.error('Error getting location name:', error);
+      // Fallback to coordinates
+      return `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
+    }
   };
 
   const getWeatherCondition = (data) => {
@@ -149,7 +199,17 @@ export default function LandingScreen({ onEnter }) {
               </View>
 
               {/* Copernicus Data Info */}
-              <View style={styles.infoCard}>
+              <TouchableOpacity 
+                style={styles.infoCard}
+                onPress={() => {
+                  if (location) {
+                    fetchWeatherData(location.latitude, location.longitude);
+                  } else {
+                    loadWeatherData();
+                  }
+                }}
+                activeOpacity={0.7}
+              >
                 <View style={styles.infoTitleContainer}>
                   <Image 
                     source={require('../assets/satellite.png')} 
@@ -157,11 +217,15 @@ export default function LandingScreen({ onEnter }) {
                     resizeMode="contain"
                   />
                   <Text style={styles.infoTitle}>Copernicus Data</Text>
+                  {loading && (
+                    <ActivityIndicator size="small" color="#FFF" style={{ marginLeft: theme.spacing.sm }} />
+                  )}
                 </View>
                 <Text style={styles.infoText}>
                   Weather data powered by Copernicus Atmosphere Monitoring Service (CAMS)
                 </Text>
-              </View>
+                <Text style={styles.refreshHint}>Tap to refresh data</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>
@@ -341,6 +405,13 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     textAlign: 'center',
     lineHeight: 16,
+  },
+  refreshHint: {
+    fontSize: 9,
+    color: 'rgba(255, 255, 255, 0.7)',
+    textAlign: 'center',
+    marginTop: theme.spacing.xs,
+    fontStyle: 'italic',
   },
   enterButton: {
     backgroundColor: 'rgba(59, 130, 246, 0.3)',
