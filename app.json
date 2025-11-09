@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "SkyeForge Workflow",
-    "slug": "skyeforge-workflow",
+    "name": "SkyForge",
+    "slug": "skyforge",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
