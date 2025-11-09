@@ -564,14 +564,14 @@ export function generateDeckGLHTML(geoJsonData, location, weatherData = null, ma
               // Skip removed trees (height 0) to avoid green floor effect
               if (!isRemoved) {
                 const isExisting = f.properties.status === 'existing';
-                trees.push({
-                  position: f.geometry.coordinates,
+              trees.push({
+                position: f.geometry.coordinates,
                   color: isAdded ? [34, 197, 94, 255] : // Bright green for user-added trees
                          isExisting ? [22, 163, 74, 255] : // Medium green for OSM trees
                          [34, 139, 34, 255], // Dark green fallback
                   radius: 3.0, // meters - tree canopy radius (slightly larger for better visibility)
                   height: isAdded ? 15 : 12, // meters - tree height (added trees slightly taller)
-                  type: 'tree',
+                type: 'tree',
                   status: f.properties.status,
                 });
               }
@@ -604,32 +604,32 @@ export function generateDeckGLHTML(geoJsonData, location, weatherData = null, ma
             } else if (f.properties.type === 'building') {
               // Buildings - check geometry type to determine rendering method
               if (f.geometry.type === 'Polygon' && f.geometry.coordinates && f.geometry.coordinates[0]) {
-                // Buildings with polygon geometry - render as 3D extruded polygons
+              // Buildings with polygon geometry - render as 3D extruded polygons
                 // Skip removed buildings (height 0) to avoid green floor effect
                 if (!isRemoved) {
                   const buildingHeight = isAdded ? 25 : 30; // meters
-                  buildingPolygons.push({
-                    polygon: f.geometry.coordinates[0], // First ring of polygon
+              buildingPolygons.push({
+                polygon: f.geometry.coordinates[0], // First ring of polygon
                     color: isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
-                    height: buildingHeight,
-                    type: 'building',
-                    status: f.properties.status,
-                  });
+                height: buildingHeight,
+                type: 'building',
+                status: f.properties.status,
+              });
                 }
               } else if (f.geometry.type === 'Point') {
-                // Buildings as points - render as 3D columns
+              // Buildings as points - render as 3D columns
                 // Skip removed buildings (height 0) to avoid green floor effect
                 if (!isRemoved) {
                   const buildingHeight = isAdded ? 25 : 30; // meters
-                  buildingPoints.push({
-                    position: f.geometry.coordinates,
+              buildingPoints.push({
+                position: f.geometry.coordinates,
                     color: isAdded ? [16, 185, 129, 240] : [59, 130, 246, 240],
-                    width: 20, // meters
-                    height: buildingHeight,
-                    type: 'building',
-                    status: f.properties.status,
-                  });
-                }
+                width: 20, // meters
+                height: buildingHeight,
+                type: 'building',
+                status: f.properties.status,
+              });
+            }
               }
             }
           });

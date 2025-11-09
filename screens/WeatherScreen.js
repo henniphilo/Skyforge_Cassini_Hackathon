@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator, Alert, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { theme } from '../theme';
@@ -119,9 +119,6 @@ export default function WeatherScreen() {
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.location}>{currentWeather.location}</Text>
-            <TouchableOpacity style={styles.gameButton}>
-              <Text style={styles.gameButtonText}>🎮 Weather Game</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Main Temperature */}
@@ -134,9 +131,9 @@ export default function WeatherScreen() {
           {/* Weather Details */}
           <View style={styles.detailsCard}>
             <View style={styles.detailRow}>
-              <DetailItem icon="💧" label="Humidity" value={`${currentWeather.humidity}%`} />
-              <DetailItem icon="💨" label="Wind" value={`${currentWeather.windSpeed} km/h`} />
-              <DetailItem icon="🌍" label="CO₂" value={`${currentWeather.co2} ppm`} />
+              <DetailItem iconSource={require('../assets/water.png')} label="Humidity" value={`${currentWeather.humidity}%`} />
+              <DetailItem iconSource={require('../assets/wind.png')} label="Wind" value={`${currentWeather.windSpeed} km/h`} />
+              <DetailItem iconSource={require('../assets/earth.png')} label="CO₂" value={`${currentWeather.co2} ppm`} />
             </View>
           </View>
 
@@ -149,7 +146,14 @@ export default function WeatherScreen() {
 
           {/* Copernicus Data Info */}
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>🌍 Copernicus Data</Text>
+            <View style={styles.infoTitleContainer}>
+              <Image 
+                source={require('../assets/satellite.png')} 
+                style={styles.infoTitleIcon}
+                resizeMode="contain"
+              />
+              <Text style={styles.infoTitle}>Copernicus Data</Text>
+            </View>
             <Text style={styles.infoText}>
               Weather data powered by Copernicus Atmosphere Monitoring Service (CAMS)
             </Text>
@@ -163,10 +167,16 @@ export default function WeatherScreen() {
   );
 }
 
-function DetailItem({ icon, label, value }) {
+function DetailItem({ iconSource, label, value }) {
   return (
     <View style={styles.detailItem}>
-      <Text style={styles.detailIcon}>{icon}</Text>
+      {iconSource ? (
+        <Image 
+          source={iconSource} 
+          style={styles.detailIconImage}
+          resizeMode="contain"
+        />
+      ) : null}
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
@@ -244,6 +254,11 @@ const styles = StyleSheet.create({
   },
   detailIcon: {
     fontSize: 32,
+    marginBottom: theme.spacing.xs,
+  },
+  detailIconImage: {
+    width: 40,
+    height: 40,
     marginBottom: theme.spacing.xs,
   },
   detailLabel: {
@@ -352,11 +367,20 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
     marginBottom: theme.spacing.xl,
   },
+  infoTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  infoTitleIcon: {
+    width: 28,
+    height: 28,
+    marginRight: theme.spacing.sm,
+  },
   infoTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#FFF',
-    marginBottom: theme.spacing.sm,
   },
   infoText: {
     fontSize: 14,

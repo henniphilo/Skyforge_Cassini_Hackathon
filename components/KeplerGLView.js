@@ -12,7 +12,7 @@ export default function KeplerGLView({
   existingCanals = [],
   existingStreets = [],
   userBuildings, 
-  removedBuildings,
+  removedBuildings, 
   removedTrees = [],
   removedCanals = [],
   removedStreets = [],
@@ -89,9 +89,9 @@ export default function KeplerGLView({
                 💨 Wind
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <Text style={styles.closeButtonText}>✕ Close</Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Text style={styles.closeButtonText}>✕ Close</Text>
+          </TouchableOpacity>
           </View>
         </View>
         <WebView
