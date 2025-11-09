@@ -415,7 +415,7 @@ export function generateKeplerHTML(geoJsonData, location) {
 /**
  * Generate simplified 3D visualization using deck.gl with proper base map
  */
-export function generateDeckGLHTML(geoJsonData, location, weatherData = null, mapRegion = null, showHeat = true, showWind = true) {
+export function generateDeckGLHTML(geoJsonData, location, weatherData = null, mapRegion = null, showHeat = true, showWind = true, showHumidity = false, showCO2 = false, showTemperature = false) {
   const dataString = JSON.stringify(geoJsonData);
   // Use map region if available, otherwise use location
   const centerLat = mapRegion?.latitude || location?.latitude || 52.52;
@@ -423,16 +423,22 @@ export function generateDeckGLHTML(geoJsonData, location, weatherData = null, ma
   const weatherString = weatherData ? JSON.stringify(weatherData) : 'null';
   
   // Calculate zoom from region delta if available
-  let initialZoom = 15;
+  // Use a more aggressive zoom calculation to ensure we're close enough
+  let initialZoom = 16; // Default to a closer zoom
   if (mapRegion?.latitudeDelta) {
     // Convert delta to approximate zoom level
+    // Smaller delta = more zoomed in = higher zoom number
     const delta = Math.max(mapRegion.latitudeDelta, mapRegion.longitudeDelta);
-    if (delta > 0.1) initialZoom = 10;
-    else if (delta > 0.05) initialZoom = 11;
-    else if (delta > 0.02) initialZoom = 12;
-    else if (delta > 0.01) initialZoom = 13;
-    else if (delta > 0.005) initialZoom = 14;
-    else initialZoom = 15;
+    if (delta > 0.1) initialZoom = 11;
+    else if (delta > 0.05) initialZoom = 13;
+    else if (delta > 0.02) initialZoom = 14;
+    else if (delta > 0.01) initialZoom = 15;
+    else if (delta > 0.005) initialZoom = 16;
+    else if (delta > 0.002) initialZoom = 17;
+    else initialZoom = 18; // Very close zoom
+  } else if (location) {
+    // If we have location but no map region, use a close zoom
+    initialZoom = 16;
   }
   
   console.log('Weather data being passed:', weatherData);
@@ -674,31 +680,30 @@ export function generateDeckGLHTML(geoJsonData, location, weatherData = null, ma
             }
           });
           
-          // Use calculated bounds or fallback to location center
-          const viewLat = (minLat !== Infinity && maxLat !== -Infinity) ? (minLat + maxLat) / 2 : centerLat;
-          const viewLon = (minLon !== Infinity && maxLon !== -Infinity) ? (minLon + maxLon) / 2 : centerLon;
+          // ALWAYS use the provided center (mapRegion or location) - don't use bounds
+          // This ensures we show the current map view, not where the data happens to be
+          const viewLat = ${centerLat};
+          const viewLon = ${centerLon};
           
-          // Calculate zoom level - prefer map region zoom, then bounds, then default
+          // Use the calculated zoom from map region, or a sensible default
           let viewZoom = ${initialZoom};
-          if (minLat !== Infinity && maxLat !== -Infinity && minLon !== Infinity && maxLon !== -Infinity) {
-            const latRange = maxLat - minLat;
-            const lonRange = maxLon - minLon;
-            const maxRange = Math.max(latRange, lonRange);
-            // Only use bounds-based zoom if we don't have a map region
-            if (!${mapRegion ? 'true' : 'false'}) {
-              // Approximate zoom calculation from bounds
-              if (maxRange > 0.1) viewZoom = 10;
-              else if (maxRange > 0.05) viewZoom = 11;
-              else if (maxRange > 0.02) viewZoom = 12;
-              else if (maxRange > 0.01) viewZoom = 13;
-              else if (maxRange > 0.005) viewZoom = 14;
-              else viewZoom = 15;
-            }
+          
+          // If we have a map region, use its zoom calculation
+          // Otherwise, use a default zoom that shows a reasonable area
+          if (!${mapRegion ? 'true' : 'false'}) {
+            // No map region - use a default zoom level appropriate for viewing a neighborhood
+            viewZoom = 15;
           }
+          
+          console.log('View center:', viewLat, viewLon);
+          console.log('View zoom:', viewZoom);
           
           // Weather layer visibility state
           let showHeatLayer = ${showHeat};
           let showWindLayer = ${showWind};
+          let showHumidityLayer = ${showHumidity};
+          let showCO2Layer = ${showCO2};
+          let showTemperatureLayer = ${showTemperature};
           
           // Prepare weather visualizations
           const weatherLayers = [];
@@ -817,6 +822,150 @@ export function generateDeckGLHTML(geoJsonData, location, weatherData = null, ma
             );
           } else {
             console.log('No wind data available:', weather);
+          }
+          
+          // Temperature layer (separate from heat map - shows temperature as colored points)
+          if (weather && weather.temperature !== undefined && weather.temperature !== null && showTemperatureLayer) {
+            const tempPoints = [];
+            const gridSize = 25;
+            const latRange = (maxLat !== -Infinity && minLat !== Infinity) ? Math.max(0.01, maxLat - minLat) : 0.01;
+            const lonRange = (maxLon !== -Infinity && minLon !== Infinity) ? Math.max(0.01, maxLon - minLon) : 0.01;
+            
+            const temp = weather.temperature || 10;
+            const minTemp = -10;
+            const maxTemp = 40;
+            const normalizedTemp = Math.max(0, Math.min(1, (temp - minTemp) / (maxTemp - minTemp)));
+            
+            // Color gradient: blue (cold) -> cyan -> green -> yellow -> red (hot)
+            const r = normalizedTemp < 0.5 ? 0 : Math.floor((normalizedTemp - 0.5) * 510);
+            const g = normalizedTemp < 0.5 ? Math.floor(normalizedTemp * 510) : 255;
+            const b = normalizedTemp < 0.5 ? Math.floor(255 - normalizedTemp * 510) : Math.floor(255 - (normalizedTemp - 0.5) * 510);
+            
+            for (let i = 0; i < gridSize; i++) {
+              for (let j = 0; j < gridSize; j++) {
+                const lat = viewLat + (i / gridSize - 0.5) * latRange;
+                const lon = viewLon + (j / gridSize - 0.5) * lonRange;
+                tempPoints.push({
+                  position: [lon, lat],
+                  temperature: temp,
+                  color: [r, g, b, 200],
+                });
+              }
+            }
+            
+            weatherLayers.push(
+              new deck.ScatterplotLayer({
+                id: 'temperature-layer',
+                data: tempPoints,
+                pickable: true,
+                opacity: 0.8,
+                stroked: true,
+                filled: true,
+                radiusScale: 1,
+                radiusMinPixels: 3,
+                radiusMaxPixels: 8,
+                lineWidthMinPixels: 1,
+                getPosition: d => d.position,
+                getRadius: 50,
+                getFillColor: d => d.color,
+                getLineColor: [255, 255, 255, 255],
+                visible: showTemperatureLayer,
+              })
+            );
+          }
+          
+          // Humidity layer (shows humidity as blue gradient)
+          if (weather && weather.humidity !== undefined && weather.humidity !== null && showHumidityLayer) {
+            const humidityPoints = [];
+            const gridSize = 25;
+            const latRange = (maxLat !== -Infinity && minLat !== Infinity) ? Math.max(0.01, maxLat - minLat) : 0.01;
+            const lonRange = (maxLon !== -Infinity && minLon !== Infinity) ? Math.max(0.01, maxLon - minLon) : 0.01;
+            
+            const humidity = weather.humidity || 50;
+            const normalizedHumidity = Math.max(0, Math.min(1, humidity / 100));
+            
+            // Color gradient: light blue (low) -> dark blue (high)
+            const b = Math.floor(100 + normalizedHumidity * 155);
+            const g = Math.floor(150 + normalizedHumidity * 105);
+            const r = Math.floor(200 - normalizedHumidity * 100);
+            
+            for (let i = 0; i < gridSize; i++) {
+              for (let j = 0; j < gridSize; j++) {
+                const lat = viewLat + (i / gridSize - 0.5) * latRange;
+                const lon = viewLon + (j / gridSize - 0.5) * lonRange;
+                humidityPoints.push({
+                  position: [lon, lat],
+                  humidity: humidity,
+                  color: [r, g, b, Math.floor(150 + normalizedHumidity * 105)],
+                });
+              }
+            }
+            
+            weatherLayers.push(
+              new deck.HeatmapLayer({
+                id: 'humidity-layer',
+                data: humidityPoints,
+                getPosition: d => d.position,
+                getWeight: d => d.humidity,
+                radiusPixels: 60,
+                intensity: 1.2,
+                threshold: 0.05,
+                colorRange: [
+                  [200, 200, 255, 0],    // Light blue (low humidity)
+                  [150, 200, 255, 100],   // Medium blue
+                  [100, 150, 255, 150],   // Blue
+                  [50, 100, 255, 200],    // Dark blue
+                  [0, 50, 255, 255],      // Very dark blue (high humidity)
+                ],
+                opacity: 0.5,
+                visible: showHumidityLayer,
+              })
+            );
+          }
+          
+          // CO2 layer (shows CO2 concentration as red/orange gradient)
+          if (weather && weather.co2 !== undefined && weather.co2 !== null && showCO2Layer) {
+            const co2Points = [];
+            const gridSize = 25;
+            const latRange = (maxLat !== -Infinity && minLat !== Infinity) ? Math.max(0.01, maxLat - minLat) : 0.01;
+            const lonRange = (maxLon !== -Infinity && minLon !== Infinity) ? Math.max(0.01, maxLon - minLon) : 0.01;
+            
+            const co2 = weather.co2 || 400;
+            const minCO2 = 300;
+            const maxCO2 = 600;
+            const normalizedCO2 = Math.max(0, Math.min(1, (co2 - minCO2) / (maxCO2 - minCO2)));
+            
+            for (let i = 0; i < gridSize; i++) {
+              for (let j = 0; j < gridSize; j++) {
+                const lat = viewLat + (i / gridSize - 0.5) * latRange;
+                const lon = viewLon + (j / gridSize - 0.5) * lonRange;
+                co2Points.push({
+                  position: [lon, lat],
+                  co2: co2,
+                });
+              }
+            }
+            
+            weatherLayers.push(
+              new deck.HeatmapLayer({
+                id: 'co2-layer',
+                data: co2Points,
+                getPosition: d => d.position,
+                getWeight: d => d.co2,
+                radiusPixels: 70,
+                intensity: 1.3,
+                threshold: 0.04,
+                colorRange: [
+                  [255, 255, 200, 0],     // Yellow (low CO2)
+                  [255, 200, 100, 100],   // Orange
+                  [255, 150, 50, 150],    // Dark orange
+                  [255, 100, 0, 200],     // Red-orange
+                  [200, 0, 0, 255],       // Dark red (high CO2)
+                ],
+                opacity: 0.6,
+                visible: showCO2Layer,
+              })
+            );
           }
           
           console.log('Weather layers created:', weatherLayers.length);

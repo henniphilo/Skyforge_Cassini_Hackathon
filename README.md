@@ -1,6 +1,17 @@
-# Weather Game App with Copernicus Data
+# 10th Cassini Hackathon
 
+# Challenge 1 Immersive Gameplay with Space Technology & Data:
+Unleash the potential of space technologies to revolutionise the gaming world. Use cutting-edge space assets, such as Copernicus Earth observation data, Galileo positioning services, and satellite connectivity to create immersive, thrilling, or science-driven gaming experiences.
+
+Design a detailed game concept that leverages one or more of these assets: Copernicus for realistic terrain, weather patterns, or environmental monitoring; Galileo for precise positioning and navigation in dynamic gameplay; or satellite connectivity for real-time updates or enhanced multiplayer scenarios.
+Develop core gameplay mechanics that creatively integrate these technologies, explaining how players will interact with features like resource management, exploration, or real-time event responses to deliver an engaging experience that blends strategy, science, and adventure.
+
+# Our Approach: 
 A React Native weather app with a 3D map game mode that uses Copernicus data and OpenStreetMap.
+
+## 📹 App Demonstration
+
+Watch the app demonstration video: [Skyforge App Demo](https://www.youtube.com/shorts/RwFToNH_QiQ)
 
 ## Prerequisites
 
